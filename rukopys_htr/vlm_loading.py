@@ -6,11 +6,22 @@ from typing import Any
 from PIL import Image
 
 
+def configure_training_processor(processor: Any, max_pixels: int | None = None) -> None:
+    if max_pixels is None:
+        return
+    image_processor = processor.image_processor
+    image_processor.max_pixels = max_pixels
+    size = getattr(image_processor, "size", None)
+    if isinstance(size, dict):
+        size["longest_edge"] = max_pixels
+
+
 def load_vision_model_and_processor(
     model_path: str | Path,
     *,
     load_in_4bit: bool = True,
     for_training: bool = False,
+    max_pixels: int | None = None,
 ) -> tuple[Any, Any, Any]:
     try:
         import torch
@@ -62,6 +73,8 @@ def load_vision_model_and_processor(
         )
 
     processor = AutoProcessor.from_pretrained(processor_id)
+    if for_training:
+        configure_training_processor(processor, max_pixels)
     if not for_training:
         model.eval()
     return torch, processor, model

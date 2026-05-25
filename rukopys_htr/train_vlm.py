@@ -23,6 +23,7 @@ class QLoRAConfig:
     batch_size: int = 1
     grad_accum_steps: int = 8
     max_length: int = 1024
+    max_pixels: int | None = None
     lora_r: int = 16
     lora_alpha: int = 32
     sample_limit: int | None = None
@@ -68,6 +69,16 @@ class JsonlVisionSFTDataset:
 
     def sample_weights(self) -> list[float]:
         return [max(float(row.get("quality_weight", 1.0)), 0.01) for row in self.rows]
+
+
+def _truncate_batch_from_right(batch: dict[str, Any], max_length: int) -> None:
+    input_ids = batch.get("input_ids")
+    if input_ids is None or input_ids.shape[1] <= max_length:
+        return
+    for key in ("input_ids", "attention_mask", "labels"):
+        tensor = batch.get(key)
+        if tensor is not None and hasattr(tensor, "shape") and tensor.shape[1] > max_length:
+            batch[key] = tensor[:, :max_length]
 
 
 def _mask_labels_to_assistant_only(
@@ -136,8 +147,6 @@ class VisionDataCollator:
             images=images,
             padding=True,
             return_tensors="pt",
-            truncation=True,
-            max_length=self.max_length,
         )
         labels = batch["input_ids"].clone()
         _mask_labels_to_assistant_only(
@@ -148,6 +157,7 @@ class VisionDataCollator:
             self.processor.tokenizer.pad_token_id,
         )
         batch["labels"] = labels
+        _truncate_batch_from_right(batch, self.max_length)
         return batch
 
 
@@ -190,6 +200,7 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         config.base_model,
         load_in_4bit=True,
         for_training=True,
+        max_pixels=config.max_pixels,
     )
     if cuda_available:
         model = prepare_model_for_kbit_training(model)

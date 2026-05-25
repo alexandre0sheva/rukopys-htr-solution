@@ -131,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int)
     p.add_argument("--grad-accum-steps", type=int)
     p.add_argument("--max-length", type=int)
+    p.add_argument("--max-pixels", type=int)
     p.add_argument("--lora-r", type=int)
     p.add_argument("--lora-alpha", type=int)
     p.add_argument("--sample-limit", type=int)
@@ -330,6 +331,9 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 max_length=_arg_or_config(
                     args, preset, config, "max_length", ("training", "max_length"), 1024
+                ),
+                max_pixels=_arg_or_config(
+                    args, preset, config, "max_pixels", ("training", "max_pixels"), None
                 ),
                 lora_r=_arg_or_config(args, preset, config, "lora_r", ("training", "lora_r"), 16),
                 lora_alpha=_arg_or_config(

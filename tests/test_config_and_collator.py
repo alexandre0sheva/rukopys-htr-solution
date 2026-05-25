@@ -4,7 +4,7 @@ from pathlib import Path
 
 from rukopys_htr.cli import _load_model_preset
 from rukopys_htr.config import load_yaml_config, resolve_value
-from rukopys_htr.train_vlm import VisionDataCollator, _mask_labels_to_assistant_only
+from rukopys_htr.train_vlm import VisionDataCollator, _mask_labels_to_assistant_only, _truncate_batch_from_right
 
 
 class FakeTensor:
@@ -21,6 +21,8 @@ class FakeTensor:
     def __getitem__(self, key):
         if isinstance(key, tuple):
             row_idx, col = key
+            if row_idx == slice(None) and isinstance(col, slice):
+                return FakeTensor([row[col] for row in self.rows])
             if isinstance(col, slice):
                 indices = range(*col.indices(len(self.rows[row_idx])))
                 return [self.rows[row_idx][index] for index in indices]
@@ -116,6 +118,19 @@ def test_mask_labels_to_assistant_only() -> None:
     assert labels[0, 4] == -100
 
 
+def test_truncate_batch_from_right() -> None:
+    batch = {
+        "input_ids": FakeTensor([[1, 2, 3, 4, 5]]),
+        "attention_mask": FakeTensor([[1, 1, 1, 1, 1]]),
+        "labels": FakeTensor([[9, 9, 9, 9, 9]]),
+        "pixel_values": FakeTensor([[1, 2, 3]]),
+    }
+    _truncate_batch_from_right(batch, max_length=3)
+    assert batch["input_ids"].rows[0] == [1, 2, 3]
+    assert batch["labels"].rows[0] == [9, 9, 9]
+    assert batch["pixel_values"].shape == (1, 3)
+
+
 def test_vision_data_collator_masks_prompt_tokens(tmp_path: Path) -> None:
     from PIL import Image
 
@@ -139,8 +154,6 @@ def test_vision_data_collator_masks_prompt_tokens(tmp_path: Path) -> None:
             images,
             padding=True,
             return_tensors="pt",
-            truncation=True,
-            max_length=1024,
         ):
             if len(text) == 1 and text[0] == "user prompt tokens":
                 return {"input_ids": FakeTensor([[9, 9]])}
