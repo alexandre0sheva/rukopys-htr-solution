@@ -27,6 +27,7 @@ It is configurable in three places:
 Recommended presets:
 
 - Colab T4: `Qwen/Qwen3-VL-2B-Instruct`
+- Colab T4 quality: `Qwen/Qwen3-VL-4B-Instruct` with 4-bit QLoRA
 - Colab L4: `Qwen/Qwen3-VL-4B-Instruct`
 - A100 quality baseline: `Qwen/Qwen3-VL-8B-Instruct`
 - multi-GPU quality baseline: `Qwen/Qwen3-VL-32B-Instruct`
@@ -37,6 +38,12 @@ dense 2B/4B/8B/32B models and MoE 30B-A3B/235B-A22B models. For this Kaggle pipe
 8B is the default because it is the strongest practical QLoRA target for a single high-memory GPU.
 See [docs/QWEN3_VL.md](/Users/alexander/Documents/htr-test/docs/QWEN3_VL.md) for the model
 selection notes.
+
+Quantization is used by default where it matters:
+
+- training uses 4-bit NF4 QLoRA on CUDA;
+- VLM inference loads the base model in 4-bit by default on CUDA;
+- pass `--no-load-in-4bit` to inference only when you explicitly want fp16/bf16 loading.
 
 ## Install
 
@@ -157,6 +164,17 @@ rukopys train-vlm-qlora \
   --batch-size 1
 ```
 
+For a stronger T4 run, use the 4-bit 4B preset:
+
+```bash
+rukopys train-vlm-qlora \
+  --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
+  --preset colab_t4_quality \
+  --output-dir runs/qwen3_vl_4b_page_t4 \
+  --sample-limit 500 \
+  --max-steps 200
+```
+
 ### 5. Run Inference
 
 Detector plus crop VLM:
@@ -178,6 +196,17 @@ rukopys infer \
   --test-dir data/raw/rukopys/test \
   --vlm-model runs/qwen3_vl_8b_page_qlora \
   --output-jsonl outputs/page_predictions.jsonl
+```
+
+VLM inference uses 4-bit loading by default on CUDA. To disable it:
+
+```bash
+rukopys infer \
+  --mode page-vlm \
+  --test-dir data/raw/rukopys/test \
+  --vlm-model runs/qwen3_vl_8b_page_qlora \
+  --output-jsonl outputs/page_predictions.jsonl \
+  --no-load-in-4bit
 ```
 
 Create the Kaggle CSV:
@@ -281,7 +310,7 @@ Open [notebooks/colab_quickstart.py](/Users/alexander/Documents/htr-test/noteboo
 
 Colab guidance:
 
-- T4: use `Qwen/Qwen3-VL-2B-Instruct`, `--max-length 768`, LoRA rank 8, and `--sample-limit` for tests.
+- T4: use `colab_t4_fast` for smoke tests and `colab_t4_quality` for 4-bit 4B runs.
 - L4: use `Qwen/Qwen3-VL-4B-Instruct`; move to `Qwen/Qwen3-VL-8B-Instruct` on A100.
 - Keep batch size at 1 and increase `--grad-accum-steps`.
 - Mount Google Drive for persistent `data/`, `runs/`, and `outputs/`.

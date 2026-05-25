@@ -74,10 +74,10 @@ class EmptyTranscriber:
         return ""
 
 
-def _load_vision_model_and_processor(model_path: Path):
+def _load_vision_model_and_processor(model_path: Path, load_in_4bit: bool = True):
     try:
         import torch
-        from transformers import AutoProcessor
+        from transformers import AutoProcessor, BitsAndBytesConfig
     except ImportError as exc:
         raise RuntimeError("Install VLM extras with `pip install -e '.[vlm]'`.") from exc
 
@@ -88,6 +88,18 @@ def _load_vision_model_and_processor(model_path: Path):
 
     model_id = str(model_path)
     processor_id = model_id
+    cuda_available = torch.cuda.is_available()
+    cuda_bf16 = cuda_available and torch.cuda.is_bf16_supported()
+    compute_dtype = torch.bfloat16 if cuda_bf16 else torch.float16
+    quantization_config = None
+    if load_in_4bit and cuda_available:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_use_double_quant=True,
+        )
+
     if (model_path / "adapter_config.json").exists():
         try:
             from peft import PeftConfig, PeftModel
@@ -98,15 +110,17 @@ def _load_vision_model_and_processor(model_path: Path):
         processor_id = peft_config.base_model_name_or_path
         base_model = AutoVisionModel.from_pretrained(
             peft_config.base_model_name_or_path,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto" if torch.cuda.is_available() else None,
+            quantization_config=quantization_config,
+            torch_dtype=compute_dtype if cuda_available else torch.float32,
+            device_map="auto" if cuda_available else None,
         )
         model = PeftModel.from_pretrained(base_model, model_id)
     else:
         model = AutoVisionModel.from_pretrained(
             model_id,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto" if torch.cuda.is_available() else None,
+            quantization_config=quantization_config,
+            torch_dtype=compute_dtype if cuda_available else torch.float32,
+            device_map="auto" if cuda_available else None,
         )
 
     processor = AutoProcessor.from_pretrained(processor_id)
@@ -120,8 +134,16 @@ def _decode_new_tokens(processor, generated, input_ids) -> str:
 
 
 class VisionTextGenerationTranscriber:
-    def __init__(self, model_path: Path, prompt: str | None = None):
-        self.torch, self.processor, self.model = _load_vision_model_and_processor(model_path)
+    def __init__(
+        self,
+        model_path: Path,
+        prompt: str | None = None,
+        load_in_4bit: bool = True,
+    ):
+        self.torch, self.processor, self.model = _load_vision_model_and_processor(
+            model_path,
+            load_in_4bit=load_in_4bit,
+        )
         self.prompt = prompt or "Transcribe this Ukrainian document region exactly."
 
     def transcribe(self, image_path: Path, region: Region) -> str:
@@ -149,8 +171,17 @@ class VisionTextGenerationTranscriber:
 
 
 class VisionPageJsonDetector:
-    def __init__(self, model_path: Path, prompt: str | None = None, max_new_tokens: int = 2048):
-        self.torch, self.processor, self.model = _load_vision_model_and_processor(model_path)
+    def __init__(
+        self,
+        model_path: Path,
+        prompt: str | None = None,
+        max_new_tokens: int = 2048,
+        load_in_4bit: bool = True,
+    ):
+        self.torch, self.processor, self.model = _load_vision_model_and_processor(
+            model_path,
+            load_in_4bit=load_in_4bit,
+        )
         self.prompt = prompt or (
             "Return a JSON array of document regions for this page. "
             "Each item must contain bbox [x1,y1,x2,y2], type, and text. "

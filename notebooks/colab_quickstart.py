@@ -78,6 +78,22 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-2b-page-t4"
   --hub-model-id {HF_MODEL_ID}
 
 # %% [markdown]
+# ## T4 quality QLoRA
+#
+# This uses 4-bit QLoRA with a larger 4B model. Use this after the smoke test works.
+
+# %%
+HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-4b-page-t4"
+!rukopys train-vlm-qlora \
+  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
+  --preset colab_t4_quality \
+  --output-dir {RUNS_DIR}/qwen3_vl_4b_page_t4 \
+  --sample-limit 500 \
+  --max-steps 200 \
+  --push-to-hub \
+  --hub-model-id {HF_MODEL_ID}
+
+# %% [markdown]
 # ## L4/A100 practical QLoRA
 #
 # Use this cell instead of the T4 smoke-test when you have enough VRAM.

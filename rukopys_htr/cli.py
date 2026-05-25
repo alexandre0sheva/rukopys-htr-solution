@@ -113,6 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detector-confidence", type=float, default=0.25)
     p.add_argument("--detector-iou", type=float, default=0.5)
     p.add_argument("--page-max-new-tokens", type=int, default=2048)
+    p.add_argument(
+        "--no-load-in-4bit",
+        action="store_true",
+        help="Disable 4-bit bitsandbytes loading for VLM inference.",
+    )
 
     p = sub.add_parser("make-submission", help="Create Kaggle submission.csv")
     p.add_argument("--predictions", type=_path, required=True)
@@ -216,13 +221,17 @@ def main(argv: list[str] | None = None) -> int:
         transcriber = EmptyTranscriber()
         page_detector = None
         if args.mode == "detector-vlm" and args.vlm_model:
-            transcriber = VisionTextGenerationTranscriber(args.vlm_model)
+            transcriber = VisionTextGenerationTranscriber(
+                args.vlm_model,
+                load_in_4bit=not args.no_load_in_4bit,
+            )
         if args.mode == "page-vlm":
             if not args.vlm_model:
                 raise ValueError("--mode page-vlm requires --vlm-model")
             page_detector = VisionPageJsonDetector(
                 args.vlm_model,
                 max_new_tokens=args.page_max_new_tokens,
+                load_in_4bit=not args.no_load_in_4bit,
             )
         count = run_inference(
             test_dir=args.test_dir,

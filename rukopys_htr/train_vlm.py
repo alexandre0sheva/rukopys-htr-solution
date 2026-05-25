@@ -105,21 +105,24 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
     processor = AutoProcessor.from_pretrained(config.base_model)
+    cuda_available = torch.cuda.is_available()
+    cuda_bf16 = cuda_available and torch.cuda.is_bf16_supported()
+    compute_dtype = torch.bfloat16 if cuda_bf16 else torch.float16
 
     quantization_config = None
-    if torch.cuda.is_available():
+    if cuda_available:
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
         )
 
     model = AutoVisionModel.from_pretrained(
         config.base_model,
         quantization_config=quantization_config,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto" if torch.cuda.is_available() else None,
+        torch_dtype=compute_dtype if cuda_available else torch.float32,
+        device_map="auto" if cuda_available else None,
     )
     if quantization_config is not None:
         model = prepare_model_for_kbit_training(model)
@@ -161,8 +164,8 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         logging_steps=10,
         save_steps=max(50, min(config.max_steps, 200)),
         save_total_limit=2,
-        bf16=torch.cuda.is_available(),
-        fp16=False,
+        bf16=cuda_bf16,
+        fp16=cuda_available and not cuda_bf16,
         gradient_checkpointing=config.gradient_checkpointing,
         remove_unused_columns=False,
         report_to=[],

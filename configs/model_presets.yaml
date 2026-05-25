@@ -8,6 +8,15 @@ presets:
     grad_accum_steps: 8
     lora_r: 8
     lora_alpha: 16
+  colab_t4_quality:
+    detector: yolo11n.pt
+    vlm_base: Qwen/Qwen3-VL-4B-Instruct
+    max_steps: 400
+    max_length: 768
+    batch_size: 1
+    grad_accum_steps: 12
+    lora_r: 8
+    lora_alpha: 16
   colab_l4_balanced:
     detector: yolo11s.pt
     vlm_base: Qwen/Qwen3-VL-4B-Instruct

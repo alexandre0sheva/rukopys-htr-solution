@@ -8,7 +8,7 @@ Select `Runtime -> Change runtime type -> GPU`.
 
 Recommended mapping:
 
-- T4: `Qwen/Qwen3-VL-2B-Instruct`, page SFT smoke tests, low sequence length.
+- T4: `Qwen/Qwen3-VL-2B-Instruct` for smoke tests, `Qwen/Qwen3-VL-4B-Instruct` for 4-bit quality runs.
 - L4: `Qwen/Qwen3-VL-4B-Instruct`, practical MVP training.
 - A100: `Qwen/Qwen3-VL-8B-Instruct` runs with longer context and more steps.
 
@@ -88,6 +88,19 @@ rukopys train-vlm-qlora \
   --hub-model-id AlexandreSheva/rukopys-qwen3-vl-2b-page-t4
 ```
 
+For a stronger T4 run, switch to the 4-bit 4B preset:
+
+```bash
+rukopys train-vlm-qlora \
+  --train-jsonl /content/drive/MyDrive/rukopys-htr/data/curated/rukopys_mvp/page_sft.jsonl \
+  --preset colab_t4_quality \
+  --output-dir /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_4b_page_t4 \
+  --sample-limit 500 \
+  --max-steps 200 \
+  --push-to-hub \
+  --hub-model-id AlexandreSheva/rukopys-qwen3-vl-4b-page-t4
+```
+
 ## 7. Train QLoRA on L4/A100
 
 ```bash
@@ -136,9 +149,11 @@ rukopys submit-kaggle \
   --message "page-vlm qlora colab"
 ```
 
+Inference loads VLMs in 4-bit on CUDA by default. Add `--no-load-in-4bit` only for fp16/bf16 inference.
+
 ## Practical Notes
 
-- If you hit OOM, lower `--max-length`, set `--sample-limit`, or use the 2B model.
+- If you hit OOM, lower `--max-length`, set `--sample-limit`, or move from the 4B T4 preset to the 2B smoke-test preset.
 - Keep `--batch-size 1` and scale effective batch with `--grad-accum-steps`.
 - Always push to Hub during real runs. Colab sessions can disconnect.
 - Start with `page_sft.jsonl`; use `vlm_sft.jsonl` only for detector+crop recognizer experiments.
