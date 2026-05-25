@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Protocol
 
 from PIL import Image
 from tqdm import tqdm
 
-from .constants import REGION_TYPES, TRANSCRIBED_TYPES
+from .constants import (
+    DEFAULT_PAGE_MAX_NEW_TOKENS,
+    DEFAULT_REGION_MAX_NEW_TOKENS,
+    EMPTY_TEXT_TYPES,
+    READING_ORDER_ROW_BAND,
+    REGION_TYPES,
+    TRANSCRIBED_TYPES,
+)
+from .ensemble import merge_page_and_detector_regions
 from .geometry import clamp_bbox
 from .io import load_split
 from .jsonl import read_jsonl, write_jsonl
 from .postprocess import regions_from_model_json
+from .prompts import page_to_regions_json_prompt, transcribe_region_prompt
 from .schemas import PageRecord, Region
+from .vlm_loading import load_vision_model_and_processor, run_vlm_generation
+
+logger = logging.getLogger(__name__)
 
 
 class Detector(Protocol):
@@ -19,7 +32,12 @@ class Detector(Protocol):
 
 
 class Transcriber(Protocol):
-    def transcribe(self, image_path: Path, region: Region) -> str: ...
+    def transcribe(
+        self,
+        image_path: Path,
+        region: Region,
+        page: PageRecord | None = None,
+    ) -> str: ...
 
 
 class EmptyDetector:
@@ -70,67 +88,13 @@ class YoloDetector:
 
 
 class EmptyTranscriber:
-    def transcribe(self, image_path: Path, region: Region) -> str:
+    def transcribe(
+        self,
+        image_path: Path,
+        region: Region,
+        page: PageRecord | None = None,
+    ) -> str:
         return ""
-
-
-def _load_vision_model_and_processor(model_path: Path, load_in_4bit: bool = True):
-    try:
-        import torch
-        from transformers import AutoProcessor, BitsAndBytesConfig
-    except ImportError as exc:
-        raise RuntimeError("Install VLM extras with `pip install -e '.[vlm]'`.") from exc
-
-    try:
-        from transformers import AutoModelForImageTextToText as AutoVisionModel
-    except ImportError:
-        from transformers import AutoModelForVision2Seq as AutoVisionModel
-
-    model_id = str(model_path)
-    processor_id = model_id
-    cuda_available = torch.cuda.is_available()
-    cuda_bf16 = cuda_available and torch.cuda.is_bf16_supported()
-    compute_dtype = torch.bfloat16 if cuda_bf16 else torch.float16
-    quantization_config = None
-    if load_in_4bit and cuda_available:
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_use_double_quant=True,
-        )
-
-    if (model_path / "adapter_config.json").exists():
-        try:
-            from peft import PeftConfig, PeftModel
-        except ImportError as exc:
-            raise RuntimeError("Install VLM extras with `pip install -e '.[vlm]'`.") from exc
-
-        peft_config = PeftConfig.from_pretrained(model_id)
-        processor_id = peft_config.base_model_name_or_path
-        base_model = AutoVisionModel.from_pretrained(
-            peft_config.base_model_name_or_path,
-            quantization_config=quantization_config,
-            torch_dtype=compute_dtype if cuda_available else torch.float32,
-            device_map="auto" if cuda_available else None,
-        )
-        model = PeftModel.from_pretrained(base_model, model_id)
-    else:
-        model = AutoVisionModel.from_pretrained(
-            model_id,
-            quantization_config=quantization_config,
-            torch_dtype=compute_dtype if cuda_available else torch.float32,
-            device_map="auto" if cuda_available else None,
-        )
-
-    processor = AutoProcessor.from_pretrained(processor_id)
-    model.eval()
-    return torch, processor, model
-
-
-def _decode_new_tokens(processor, generated, input_ids) -> str:
-    generated_ids = generated[:, input_ids.shape[-1] :]
-    return processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 
 
 class VisionTextGenerationTranscriber:
@@ -139,35 +103,35 @@ class VisionTextGenerationTranscriber:
         model_path: Path,
         prompt: str | None = None,
         load_in_4bit: bool = True,
+        max_new_tokens: int = DEFAULT_REGION_MAX_NEW_TOKENS,
     ):
-        self.torch, self.processor, self.model = _load_vision_model_and_processor(
+        self.torch, self.processor, self.model = load_vision_model_and_processor(
             model_path,
             load_in_4bit=load_in_4bit,
         )
-        self.prompt = prompt or "Transcribe this Ukrainian document region exactly."
+        self.default_prompt = prompt
+        self.max_new_tokens = max_new_tokens
 
-    def transcribe(self, image_path: Path, region: Region) -> str:
+    def transcribe(
+        self,
+        image_path: Path,
+        region: Region,
+        page: PageRecord | None = None,
+    ) -> str:
+        prompt = self.default_prompt or transcribe_region_prompt(
+            source=page.source if page else None,
+            region_type=region.type,
+        )
         with Image.open(image_path) as image:
             crop = image.crop(tuple(region.bbox)).convert("RGB")
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": crop},
-                    {"type": "text", "text": self.prompt},
-                ],
-            }
-        ]
-        text = self.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
+        return run_vlm_generation(
+            self.torch,
+            self.processor,
+            self.model,
+            crop,
+            prompt,
+            max_new_tokens=self.max_new_tokens,
         )
-        inputs = self.processor(text=[text], images=[crop], return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-        with self.torch.inference_mode():
-            generated = self.model.generate(**inputs, max_new_tokens=192)
-        return _decode_new_tokens(self.processor, generated, inputs["input_ids"])
 
 
 class VisionPageJsonDetector:
@@ -175,49 +139,71 @@ class VisionPageJsonDetector:
         self,
         model_path: Path,
         prompt: str | None = None,
-        max_new_tokens: int = 2048,
+        max_new_tokens: int = DEFAULT_PAGE_MAX_NEW_TOKENS,
         load_in_4bit: bool = True,
     ):
-        self.torch, self.processor, self.model = _load_vision_model_and_processor(
+        self.torch, self.processor, self.model = load_vision_model_and_processor(
             model_path,
             load_in_4bit=load_in_4bit,
         )
-        self.prompt = prompt or (
-            "Return a JSON array of document regions for this page. "
-            "Each item must contain bbox [x1,y1,x2,y2], type, and text. "
-            "Use exact transcription. Use empty text for image and graph regions."
-        )
+        self.default_prompt = prompt
         self.max_new_tokens = max_new_tokens
 
     def detect_for_page(
-        self, image_path: Path, image_width: int, image_height: int
+        self,
+        image_path: Path,
+        image_width: int,
+        image_height: int,
+        page: PageRecord | None = None,
     ) -> list[Region]:
+        prompt = self.default_prompt or page_to_regions_json_prompt(
+            source=page.source if page else None,
+        )
         with Image.open(image_path) as image:
             page_image = image.convert("RGB")
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": page_image},
-                    {"type": "text", "text": self.prompt},
-                ],
-            }
-        ]
-        text = self.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
+        decoded = run_vlm_generation(
+            self.torch,
+            self.processor,
+            self.model,
+            page_image,
+            prompt,
+            max_new_tokens=self.max_new_tokens,
         )
-        inputs = self.processor(text=[text], images=[page_image], return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-        with self.torch.inference_mode():
-            generated = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
-        decoded = _decode_new_tokens(self.processor, generated, inputs["input_ids"])
-        return regions_from_model_json(decoded, image_width=image_width, image_height=image_height)
+        regions = regions_from_model_json(
+            decoded,
+            image_width=image_width,
+            image_height=image_height,
+        )
+        if not regions:
+            logger.warning("Page-VLM returned no regions for %s", image_path)
+        return regions
 
 
 def sort_regions_reading_order(regions: list[Region]) -> list[Region]:
-    return sorted(regions, key=lambda region: (region.bbox[1] // 40, region.bbox[0]))
+    return sorted(
+        regions,
+        key=lambda region: (region.bbox[1] // READING_ORDER_ROW_BAND, region.bbox[0]),
+    )
+
+
+def _finalize_regions(
+    detected_regions: list[Region],
+    page: PageRecord,
+    image_path: Path,
+    transcriber: Transcriber,
+) -> list[Region]:
+    regions: list[Region] = []
+    for region in detected_regions:
+        bbox = clamp_bbox(region.bbox, page.image_width, page.image_height)
+        if bbox is None:
+            continue
+        region.bbox = bbox
+        if region.type in EMPTY_TEXT_TYPES:
+            region.text = ""
+        elif not region.text and region.type in TRANSCRIBED_TYPES:
+            region.text = transcriber.transcribe(image_path, region, page=page)
+        regions.append(region)
+    return sort_regions_reading_order(regions)
 
 
 def run_inference(
@@ -226,6 +212,9 @@ def run_inference(
     detector: Detector | None = None,
     transcriber: Transcriber | None = None,
     page_detector: VisionPageJsonDetector | None = None,
+    *,
+    ensemble: bool = False,
+    ensemble_iou_threshold: float = 0.5,
 ) -> int:
     detector = detector or EmptyDetector()
     transcriber = transcriber or EmptyTranscriber()
@@ -239,31 +228,46 @@ def run_inference(
         ]
 
     rows = []
+    json_failures = 0
     for page in tqdm(pages, desc="Inference"):
         image_path = Path(page.image_path or test_dir / page.file_name)
-        regions = []
-        detected_regions = (
-            page_detector.detect_for_page(image_path, page.image_width, page.image_height)
-            if page_detector
-            else detector.detect(image_path)
-        )
-        for region in detected_regions:
-            bbox = clamp_bbox(region.bbox, page.image_width, page.image_height)
-            if bbox is None:
-                continue
-            region.bbox = bbox
-            if not region.text and region.type in TRANSCRIBED_TYPES:
-                region.text = transcriber.transcribe(image_path, region)
-            elif region.type not in TRANSCRIBED_TYPES:
-                region.text = ""
-            regions.append(region)
-        regions = sort_regions_reading_order(regions)
+        if ensemble and page_detector is not None:
+            page_regions = page_detector.detect_for_page(
+                image_path,
+                page.image_width,
+                page.image_height,
+                page=page,
+            )
+            if not page_regions:
+                json_failures += 1
+            detector_regions = detector.detect(image_path)
+            detected_regions = merge_page_and_detector_regions(
+                page_regions,
+                detector_regions,
+                iou_threshold=ensemble_iou_threshold,
+            )
+        elif page_detector is not None:
+            detected_regions = page_detector.detect_for_page(
+                image_path,
+                page.image_width,
+                page.image_height,
+                page=page,
+            )
+            if not detected_regions:
+                json_failures += 1
+        else:
+            detected_regions = detector.detect(image_path)
+
+        regions = _finalize_regions(detected_regions, page, image_path, transcriber)
         rows.append(
             {
                 "image": page.image_name,
                 "regions": [region.to_full_dict() for region in regions],
             }
         )
+
+    if json_failures:
+        logger.warning("Page-VLM produced empty regions on %d pages", json_failures)
 
     write_jsonl(output_jsonl, rows)
     return len(rows)

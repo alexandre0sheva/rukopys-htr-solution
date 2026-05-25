@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
+
+from .jsonl import read_jsonl
+from .prompts import transcribe_region_prompt
+from .vlm_loading import load_vision_model_and_processor
 
 
 @dataclass(slots=True)
@@ -21,31 +26,67 @@ class QLoRAConfig:
     lora_r: int = 16
     lora_alpha: int = 32
     sample_limit: int | None = None
+    min_quality_weight: float | None = None
+    use_weighted_sampling: bool = True
+    eval_fraction: float = 0.1
+    eval_steps: int = 50
     gradient_checkpointing: bool = True
     push_to_hub: bool = False
     hub_model_id: str | None = None
 
 
 class JsonlVisionSFTDataset:
-    def __init__(self, jsonl_path: Path, max_length: int, sample_limit: int | None = None):
+    def __init__(
+        self,
+        jsonl_path: Path,
+        max_length: int,
+        sample_limit: int | None = None,
+        min_quality_weight: float | None = None,
+        rows: list[dict[str, Any]] | None = None,
+    ):
         self.root = jsonl_path.parent
         self.max_length = max_length
-        self.rows: list[dict[str, Any]] = []
-        with jsonl_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if line:
-                    row = json.loads(line)
-                    if row.get("image") and row.get("answer") is not None:
-                        self.rows.append(row)
-                    if sample_limit is not None and len(self.rows) >= sample_limit:
-                        break
+        if rows is not None:
+            self.rows = rows
+        else:
+            self.rows = []
+            for row in read_jsonl(jsonl_path):
+                if not row.get("image") or row.get("answer") is None:
+                    continue
+                weight = float(row.get("quality_weight", 1.0))
+                if min_quality_weight is not None and weight < min_quality_weight:
+                    continue
+                self.rows.append(row)
+                if sample_limit is not None and len(self.rows) >= sample_limit:
+                    break
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         return self.rows[index]
+
+    def sample_weights(self) -> list[float]:
+        return [max(float(row.get("quality_weight", 1.0)), 0.01) for row in self.rows]
+
+
+def _mask_labels_to_assistant_only(
+    processor: Any,
+    labels: Any,
+    prompt_texts: list[str],
+    images: list[Image.Image],
+    pad_token_id: int | None,
+) -> None:
+    for index, prompt_text in enumerate(prompt_texts):
+        prompt_inputs = processor(
+            text=[prompt_text],
+            images=[images[index]],
+            return_tensors="pt",
+        )
+        prompt_len = prompt_inputs["input_ids"].shape[1]
+        labels[index, :prompt_len] = -100
+    if pad_token_id is not None:
+        labels[labels == pad_token_id] = -100
 
 
 class VisionDataCollator:
@@ -55,24 +96,39 @@ class VisionDataCollator:
         self.max_length = max_length
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
-        texts = []
-        images = []
+        texts: list[str] = []
+        prompt_texts: list[str] = []
+        images: list[Image.Image] = []
         for row in features:
-            image = Image.open(self.root / row["image"]).convert("RGB")
+            with Image.open(self.root / row["image"]) as image_file:
+                image = image_file.convert("RGB")
             answer = row["answer"]
             if not isinstance(answer, str):
                 answer = json.dumps(answer, ensure_ascii=False)
-            messages = [
+            prompt = row.get("prompt") or transcribe_region_prompt(
+                source=row.get("source"),
+                region_type=row.get("region_type"),
+            )
+            user_messages = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "image", "image": image},
-                        {"type": "text", "text": row.get("prompt") or "Transcribe exactly."},
+                        {"type": "text", "text": prompt},
                     ],
-                },
+                }
+            ]
+            full_messages = user_messages + [
                 {"role": "assistant", "content": [{"type": "text", "text": answer}]},
             ]
-            texts.append(self.processor.apply_chat_template(messages, tokenize=False))
+            prompt_texts.append(
+                self.processor.apply_chat_template(
+                    user_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            )
+            texts.append(self.processor.apply_chat_template(full_messages, tokenize=False))
             images.append(image)
 
         batch = self.processor(
@@ -83,48 +139,59 @@ class VisionDataCollator:
             truncation=True,
             max_length=self.max_length,
         )
-        batch["labels"] = batch["input_ids"].clone()
-        pad_token_id = self.processor.tokenizer.pad_token_id
-        if pad_token_id is not None:
-            batch["labels"][batch["labels"] == pad_token_id] = -100
+        labels = batch["input_ids"].clone()
+        _mask_labels_to_assistant_only(
+            self.processor,
+            labels,
+            prompt_texts,
+            images,
+            self.processor.tokenizer.pad_token_id,
+        )
+        batch["labels"] = labels
         return batch
+
+
+def _split_train_eval_rows(
+    rows: list[dict[str, Any]],
+    eval_fraction: float,
+    seed: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if eval_fraction <= 0 or len(rows) < 2:
+        return rows, []
+    rng = random.Random(seed)
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_source.setdefault(str(row.get("source") or "unknown"), []).append(row)
+
+    eval_rows: list[dict[str, Any]] = []
+    train_rows: list[dict[str, Any]] = []
+    for source_rows in by_source.values():
+        source_rows = list(source_rows)
+        rng.shuffle(source_rows)
+        eval_count = max(1, round(len(source_rows) * eval_fraction)) if len(source_rows) > 1 else 0
+        eval_rows.extend(source_rows[:eval_count])
+        train_rows.extend(source_rows[eval_count:])
+    return train_rows, eval_rows
 
 
 def train_vlm_qlora(config: QLoRAConfig) -> Path:
     try:
         import torch
         from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-        from transformers import AutoProcessor, BitsAndBytesConfig, Trainer, TrainingArguments
+        from transformers import Trainer, TrainingArguments
     except ImportError as exc:
         raise RuntimeError("Install VLM extras with `pip install -e '.[vlm]'`.") from exc
 
-    try:
-        from transformers import AutoModelForImageTextToText as AutoVisionModel
-    except ImportError:
-        from transformers import AutoModelForVision2Seq as AutoVisionModel
-
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    processor = AutoProcessor.from_pretrained(config.base_model)
     cuda_available = torch.cuda.is_available()
     cuda_bf16 = cuda_available and torch.cuda.is_bf16_supported()
-    compute_dtype = torch.bfloat16 if cuda_bf16 else torch.float16
 
-    quantization_config = None
-    if cuda_available:
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=compute_dtype,
-            bnb_4bit_use_double_quant=True,
-        )
-
-    model = AutoVisionModel.from_pretrained(
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    _, processor, model = load_vision_model_and_processor(
         config.base_model,
-        quantization_config=quantization_config,
-        torch_dtype=compute_dtype if cuda_available else torch.float32,
-        device_map="auto" if cuda_available else None,
+        load_in_4bit=True,
+        for_training=True,
     )
-    if quantization_config is not None:
+    if cuda_available:
         model = prepare_model_for_kbit_training(model)
     if config.gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
         model.gradient_checkpointing_enable()
@@ -147,13 +214,49 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
     )
     model = get_peft_model(model, lora_config)
 
-    dataset = JsonlVisionSFTDataset(
+    all_rows = JsonlVisionSFTDataset(
         config.train_jsonl,
         max_length=config.max_length,
         sample_limit=config.sample_limit,
-    )
-    if len(dataset) == 0:
+        min_quality_weight=config.min_quality_weight,
+    ).rows
+    if not all_rows:
         raise ValueError(f"No trainable rows found in {config.train_jsonl}")
+
+    train_rows, eval_rows = _split_train_eval_rows(all_rows, config.eval_fraction, seed=42)
+    train_dataset = JsonlVisionSFTDataset(
+        config.train_jsonl,
+        max_length=config.max_length,
+        rows=train_rows,
+    )
+    eval_dataset = (
+        JsonlVisionSFTDataset(
+            config.train_jsonl,
+            max_length=config.max_length,
+            rows=eval_rows,
+        )
+        if eval_rows
+        else None
+    )
+
+    data_collator = VisionDataCollator(
+        processor,
+        root=config.train_jsonl.parent,
+        max_length=config.max_length,
+    )
+
+    if config.use_weighted_sampling and len(train_dataset) > 1:
+        try:
+            from torch.utils.data import WeightedRandomSampler
+
+            weights = train_dataset.sample_weights()
+            train_sampler = WeightedRandomSampler(
+                weights=torch.tensor(weights, dtype=torch.double),
+                num_samples=len(train_dataset),
+                replacement=True,
+            )
+        except ImportError:
+            train_sampler = None
 
     args = TrainingArguments(
         output_dir=str(config.output_dir),
@@ -171,17 +274,18 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         report_to=[],
         push_to_hub=config.push_to_hub,
         hub_model_id=config.hub_model_id,
+        eval_strategy="steps" if eval_dataset is not None else "no",
+        eval_steps=config.eval_steps if eval_dataset is not None else None,
+        per_device_eval_batch_size=config.batch_size,
     )
 
     trainer = Trainer(
         model=model,
         args=args,
-        train_dataset=dataset,
-        data_collator=VisionDataCollator(
-            processor,
-            root=config.train_jsonl.parent,
-            max_length=config.max_length,
-        ),
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        data_collator=data_collator,
+        train_sampler=train_sampler,
     )
     trainer.train()
     trainer.save_model(str(config.output_dir))

@@ -127,3 +127,20 @@ def test_proxy_evaluation(tmp_path: Path) -> None:
     metrics = evaluate_predictions(raw, predictions)
     assert metrics["f1"] == 1.0
     assert metrics["cer"] == 0.0
+
+
+def test_quality_weight_filters_training_rows(tmp_path: Path) -> None:
+    from rukopys_htr.jsonl import write_jsonl
+    from rukopys_htr.train_vlm import JsonlVisionSFTDataset
+
+    jsonl_path = tmp_path / "vlm_sft.jsonl"
+    write_jsonl(
+        jsonl_path,
+        [
+            {"image": "a.jpg", "answer": "A", "quality_weight": 1.0},
+            {"image": "b.jpg", "answer": "B", "quality_weight": 0.35},
+        ],
+    )
+    dataset = JsonlVisionSFTDataset(jsonl_path, max_length=128, min_quality_weight=0.75)
+    assert len(dataset) == 1
+    assert dataset.rows[0]["answer"] == "A"

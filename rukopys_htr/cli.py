@@ -5,10 +5,20 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .constants import DEFAULT_DETECTOR_MODEL, DEFAULT_VLM_BASE_MODEL
+from .config import load_yaml_config, resolve_value
+from .constants import (
+    DEFAULT_CURATED_DATASET,
+    DEFAULT_DETECTOR_CONFIDENCE,
+    DEFAULT_DETECTOR_IOU,
+    DEFAULT_DETECTOR_MODEL,
+    DEFAULT_PAGE_MAX_NEW_TOKENS,
+    DEFAULT_REGION_MAX_NEW_TOKENS,
+    DEFAULT_VLM_BASE_MODEL,
+    SOURCE_DATASET,
+)
 from .curate import curate_dataset
-from .download import download_dataset
-from .evaluate import evaluate_predictions
+from .download import download_curated_dataset, download_dataset
+from .evaluate import evaluate_curated_val, evaluate_predictions
 from .infer import (
     EmptyDetector,
     EmptyTranscriber,
@@ -19,6 +29,7 @@ from .infer import (
 )
 from .io import load_predictions_jsonl, write_submission
 from .kaggle import submit_to_kaggle
+from .pack import pack_curated, unpack_curated
 from .train_detector import train_detector
 from .train_vlm import QLoRAConfig, train_vlm_qlora
 from .upload import upload_folder_to_hub
@@ -45,25 +56,44 @@ def _load_model_preset(name: str | None) -> dict[str, Any]:
     return presets[name] or {}
 
 
-def _arg_or_preset(
+def _arg_or_config(
     args: argparse.Namespace,
     preset: dict[str, Any],
+    config: dict[str, Any],
     name: str,
+    config_keys: tuple[str, ...],
     default: Any,
 ) -> Any:
-    value = getattr(args, name)
-    if value is not None:
-        return value
-    return preset.get(name, default)
+    return resolve_value(
+        getattr(args, name),
+        preset,
+        config,
+        name,
+        config_keys,
+        default,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rukopys", description="RUKOPYS HTR MVP pipeline")
+    parser.add_argument(
+        "--config",
+        type=_path,
+        help="Path to default YAML config (merged before CLI args)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("download", help="Download RUKOPYS from Hugging Face")
     p.add_argument("--output", type=_path, required=True)
-    p.add_argument("--repo-id", default="UkrainianCatholicUniversity/rukopys")
+    p.add_argument("--repo-id")
+
+    p = sub.add_parser(
+        "download-curated",
+        help="Download curated dataset from Hugging Face and unpack tar shards",
+    )
+    p.add_argument("--output", type=_path, required=True)
+    p.add_argument("--repo-id")
+    p.add_argument("--no-unpack", action="store_true")
 
     p = sub.add_parser("curate", help="Curate raw RUKOPYS data into training artifacts")
     p.add_argument("--raw-dir", type=_path, required=True)
@@ -72,12 +102,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-silver", type=int)
     p.add_argument("--crop-images", action="store_true")
     p.add_argument("--no-page-sft", action="store_true")
-    p.add_argument("--val-fraction", type=float, default=0.15)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--val-fraction", type=float)
+    p.add_argument("--seed", type=int)
+
+    p = sub.add_parser("pack-curated", help="Pack curated image directories into tar shards")
+    p.add_argument("--dataset-dir", type=_path, required=True)
+    p.add_argument("--max-files-per-shard", type=int, default=2000)
+
+    p = sub.add_parser("unpack-curated", help="Restore loose files from tar shards")
+    p.add_argument("--dataset-dir", type=_path, required=True)
+    p.add_argument("--keep-shards", action="store_true")
 
     p = sub.add_parser("train-detector", help="Train YOLO layout detector")
     p.add_argument("--data-yaml", type=_path, required=True)
-    p.add_argument("--model", default=DEFAULT_DETECTOR_MODEL)
+    p.add_argument("--model")
     p.add_argument("--output-dir", type=_path, required=True)
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--image-size", type=int, default=1280)
@@ -96,6 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lora-r", type=int)
     p.add_argument("--lora-alpha", type=int)
     p.add_argument("--sample-limit", type=int)
+    p.add_argument("--min-quality-weight", type=float)
+    p.add_argument("--no-weighted-sampling", action="store_true")
+    p.add_argument("--eval-fraction", type=float)
+    p.add_argument("--eval-steps", type=int)
     p.add_argument("--no-gradient-checkpointing", action="store_true")
     p.add_argument("--push-to-hub", action="store_true")
     p.add_argument("--hub-model-id")
@@ -107,12 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vlm-model", type=_path)
     p.add_argument(
         "--mode",
-        choices=["empty", "detector-vlm", "page-vlm"],
-        default="detector-vlm",
+        choices=["empty", "detector-vlm", "page-vlm", "ensemble"],
     )
-    p.add_argument("--detector-confidence", type=float, default=0.25)
-    p.add_argument("--detector-iou", type=float, default=0.5)
-    p.add_argument("--page-max-new-tokens", type=int, default=2048)
+    p.add_argument("--detector-confidence", type=float)
+    p.add_argument("--detector-iou", type=float)
+    p.add_argument("--region-max-new-tokens", type=int)
+    p.add_argument("--page-max-new-tokens", type=int)
+    p.add_argument("--ensemble-iou-threshold", type=float, default=0.5)
     p.add_argument(
         "--no-load-in-4bit",
         action="store_true",
@@ -128,14 +171,43 @@ def build_parser() -> argparse.ArgumentParser:
         "evaluate",
         help="Evaluate predictions on train metadata with a proxy metric",
     )
-    p.add_argument("--raw-dir", type=_path, required=True)
+    p.add_argument("--raw-dir", type=_path)
+    p.add_argument("--curated-dir", type=_path)
     p.add_argument("--predictions", type=_path, required=True)
     p.add_argument("--iou-threshold", type=float, default=0.5)
+    p.add_argument("--split", choices=["train", "yolo_val"], default="train")
+    p.add_argument("--by-source", action="store_true")
+    p.add_argument("--by-annotation-source", action="store_true")
 
     p = sub.add_parser("upload-dataset", help="Upload curated dataset folder to Hugging Face")
     p.add_argument("--dataset-dir", type=_path, required=True)
     p.add_argument("--repo-id", required=True)
     p.add_argument("--private", action="store_true")
+    p.add_argument(
+        "--pack",
+        action="store_true",
+        default=True,
+        help="Pack image directories into tar shards before upload (default: true)",
+    )
+    p.add_argument(
+        "--no-pack",
+        action="store_false",
+        dest="pack",
+        help="Upload loose files without packing",
+    )
+    p.add_argument(
+        "--replace-existing",
+        action="store_true",
+        default=True,
+        help="Delete all previous Hub files before upload (default: true)",
+    )
+    p.add_argument(
+        "--no-replace-existing",
+        action="store_false",
+        dest="replace_existing",
+        help="Keep previous Hub files and upload additively",
+    )
+    p.add_argument("--max-files-per-shard", type=int, default=2000)
 
     p = sub.add_parser("upload-model", help="Upload model artifact folder to Hugging Face")
     p.add_argument("--model-dir", type=_path, required=True)
@@ -153,30 +225,65 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    config = load_yaml_config(args.config)
 
     if args.command == "download":
-        path = download_dataset(output_dir=args.output, repo_id=args.repo_id)
+        path = download_dataset(
+            output_dir=args.output,
+            repo_id=args.repo_id or config.get("source_dataset", SOURCE_DATASET),
+        )
         print(path)
         return 0
 
+    if args.command == "download-curated":
+        path, stats = download_curated_dataset(
+            output_dir=args.output,
+            repo_id=args.repo_id or config.get("curated_dataset", DEFAULT_CURATED_DATASET),
+            unpack=not args.no_unpack,
+        )
+        print(json.dumps({"path": str(path), **stats}, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "curate":
+        curation = config.get("curation", {})
         stats = curate_dataset(
             raw_dir=args.raw_dir,
             output_dir=args.output_dir,
-            include_silver=args.include_silver,
-            max_silver=args.max_silver,
-            crop_images=args.crop_images,
-            page_sft=not args.no_page_sft,
-            val_fraction=args.val_fraction,
-            seed=args.seed,
+            include_silver=args.include_silver or bool(curation.get("include_silver")),
+            max_silver=(
+                args.max_silver if args.max_silver is not None else curation.get("max_silver")
+            ),
+            crop_images=args.crop_images or bool(curation.get("crop_images")),
+            page_sft=not args.no_page_sft and curation.get("page_sft", True),
+            val_fraction=args.val_fraction
+            if args.val_fraction is not None
+            else curation.get("val_fraction", 0.15),
+            seed=args.seed if args.seed is not None else curation.get("seed", 42),
+        )
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "pack-curated":
+        stats = pack_curated(
+            dataset_dir=args.dataset_dir,
+            max_files_per_shard=args.max_files_per_shard,
+        )
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "unpack-curated":
+        stats = unpack_curated(
+            dataset_dir=args.dataset_dir,
+            keep_shards=args.keep_shards,
         )
         print(json.dumps(stats, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "train-detector":
+        models = config.get("models", {})
         path = train_detector(
             data_yaml=args.data_yaml,
-            model=args.model,
+            model=args.model or models.get("detector", DEFAULT_DETECTOR_MODEL),
             output_dir=args.output_dir,
             epochs=args.epochs,
             image_size=args.image_size,
@@ -190,16 +297,53 @@ def main(argv: list[str] | None = None) -> int:
         path = train_vlm_qlora(
             QLoRAConfig(
                 train_jsonl=args.train_jsonl,
-                base_model=args.base_model or preset.get("vlm_base") or DEFAULT_VLM_BASE_MODEL,
+                base_model=_arg_or_config(
+                    args,
+                    preset,
+                    config,
+                    "base_model",
+                    ("models", "vlm_base"),
+                    preset.get("vlm_base", DEFAULT_VLM_BASE_MODEL),
+                ),
                 output_dir=args.output_dir,
-                max_steps=_arg_or_preset(args, preset, "max_steps", 200),
-                learning_rate=_arg_or_preset(args, preset, "learning_rate", 2e-4),
-                batch_size=_arg_or_preset(args, preset, "batch_size", 1),
-                grad_accum_steps=_arg_or_preset(args, preset, "grad_accum_steps", 8),
-                max_length=_arg_or_preset(args, preset, "max_length", 1024),
-                lora_r=_arg_or_preset(args, preset, "lora_r", 16),
-                lora_alpha=_arg_or_preset(args, preset, "lora_alpha", 32),
+                max_steps=_arg_or_config(
+                    args, preset, config, "max_steps", ("training", "max_steps"), 200
+                ),
+                learning_rate=_arg_or_config(
+                    args,
+                    preset,
+                    config,
+                    "learning_rate",
+                    ("training", "learning_rate"),
+                    2e-4,
+                ),
+                batch_size=_arg_or_config(
+                    args, preset, config, "batch_size", ("training", "batch_size"), 1
+                ),
+                grad_accum_steps=_arg_or_config(
+                    args,
+                    preset,
+                    config,
+                    "grad_accum_steps",
+                    ("training", "grad_accum_steps"),
+                    8,
+                ),
+                max_length=_arg_or_config(
+                    args, preset, config, "max_length", ("training", "max_length"), 1024
+                ),
+                lora_r=_arg_or_config(args, preset, config, "lora_r", ("training", "lora_r"), 16),
+                lora_alpha=_arg_or_config(
+                    args, preset, config, "lora_alpha", ("training", "lora_alpha"), 32
+                ),
                 sample_limit=args.sample_limit,
+                min_quality_weight=args.min_quality_weight,
+                use_weighted_sampling=not args.no_weighted_sampling,
+                eval_fraction=args.eval_fraction
+                if args.eval_fraction is not None
+                else config.get("training", {}).get("eval_fraction", 0.1),
+                eval_steps=args.eval_steps
+                if args.eval_steps is not None
+                else config.get("training", {}).get("eval_steps", 50),
                 gradient_checkpointing=not args.no_gradient_checkpointing,
                 push_to_hub=args.push_to_hub,
                 hub_model_id=args.hub_model_id,
@@ -209,36 +353,63 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "infer":
+        inference = config.get("inference", {})
+        mode = args.mode or inference.get("mode", "detector-vlm")
+        if mode == "detector_vlm":
+            mode = "detector-vlm"
+
         detector = (
             YoloDetector(
                 model_path=args.detector_model,
-                confidence=args.detector_confidence,
-                iou=args.detector_iou,
+                confidence=args.detector_confidence
+                if args.detector_confidence is not None
+                else inference.get("detector_confidence", DEFAULT_DETECTOR_CONFIDENCE),
+                iou=args.detector_iou
+                if args.detector_iou is not None
+                else inference.get("detector_iou", DEFAULT_DETECTOR_IOU),
             )
             if args.detector_model
             else EmptyDetector()
         )
         transcriber = EmptyTranscriber()
         page_detector = None
-        if args.mode == "detector-vlm" and args.vlm_model:
+        load_in_4bit = not args.no_load_in_4bit
+        region_max_new_tokens = (
+            args.region_max_new_tokens
+            if args.region_max_new_tokens is not None
+            else inference.get("region_max_new_tokens", DEFAULT_REGION_MAX_NEW_TOKENS)
+        )
+        page_max_new_tokens = (
+            args.page_max_new_tokens
+            if args.page_max_new_tokens is not None
+            else inference.get("page_max_new_tokens", DEFAULT_PAGE_MAX_NEW_TOKENS)
+        )
+
+        if mode in {"detector-vlm", "ensemble"} and args.vlm_model:
             transcriber = VisionTextGenerationTranscriber(
                 args.vlm_model,
-                load_in_4bit=not args.no_load_in_4bit,
+                load_in_4bit=load_in_4bit,
+                max_new_tokens=region_max_new_tokens,
             )
-        if args.mode == "page-vlm":
+        if mode in {"page-vlm", "ensemble"}:
             if not args.vlm_model:
-                raise ValueError("--mode page-vlm requires --vlm-model")
+                raise ValueError(f"--mode {mode} requires --vlm-model")
             page_detector = VisionPageJsonDetector(
                 args.vlm_model,
-                max_new_tokens=args.page_max_new_tokens,
-                load_in_4bit=not args.no_load_in_4bit,
+                max_new_tokens=page_max_new_tokens,
+                load_in_4bit=load_in_4bit,
             )
+        if mode == "ensemble" and not args.detector_model:
+            raise ValueError("--mode ensemble requires --detector-model")
+
         count = run_inference(
             test_dir=args.test_dir,
             output_jsonl=args.output_jsonl,
             detector=detector,
             transcriber=transcriber,
             page_detector=page_detector,
+            ensemble=mode == "ensemble",
+            ensemble_iou_threshold=args.ensemble_iou_threshold,
         )
         print(f"Wrote predictions for {count} images to {args.output_jsonl}")
         return 0
@@ -250,12 +421,28 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "evaluate":
-        metrics = evaluate_predictions(
-            args.raw_dir,
-            args.predictions,
-            iou_threshold=args.iou_threshold,
-        )
-        print(json.dumps(metrics, indent=2))
+        if args.split == "yolo_val":
+            if not args.curated_dir:
+                raise ValueError("--split yolo_val requires --curated-dir")
+            metrics = evaluate_curated_val(
+                args.curated_dir,
+                args.predictions,
+                iou_threshold=args.iou_threshold,
+                by_source=args.by_source,
+                by_annotation_source=args.by_annotation_source,
+            )
+        else:
+            if not args.raw_dir:
+                raise ValueError("--split train requires --raw-dir")
+            metrics = evaluate_predictions(
+                args.raw_dir,
+                args.predictions,
+                iou_threshold=args.iou_threshold,
+                split=args.split,
+                by_source=args.by_source,
+                by_annotation_source=args.by_annotation_source,
+            )
+        print(json.dumps(metrics, indent=2, ensure_ascii=False))
         return 0
 
     if args.command == "upload-dataset":
@@ -265,6 +452,9 @@ def main(argv: list[str] | None = None) -> int:
             repo_type="dataset",
             private=args.private,
             commit_message="Upload curated RUKOPYS MVP dataset",
+            pack=args.pack,
+            replace_existing=args.replace_existing,
+            max_files_per_shard=args.max_files_per_shard,
         )
         print(url)
         return 0

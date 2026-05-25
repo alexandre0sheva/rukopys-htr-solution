@@ -49,18 +49,22 @@ os.environ["HF_TOKEN"] = getpass.getpass("HF_TOKEN: ")
 !hf auth whoami
 
 # %% [markdown]
-# ## Download and curate
+# ## Download curated dataset
+#
+# Skip local curation by downloading the packed curated dataset from Hugging Face.
+# It is unpacked automatically into the normal training layout.
+#
+# You still need the raw dataset for `sample_submission.csv` and the test split used at inference time.
+
+# %%
+HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
+
+!rukopys download-curated \
+  --output {CURATED_DIR} \
+  --repo-id {HF_DATASET_ID}
 
 # %%
 !rukopys download --output {RAW_DIR}
-
-# %%
-!rukopys curate \
-  --raw-dir {RAW_DIR} \
-  --output-dir {CURATED_DIR} \
-  --include-silver \
-  --max-silver 1000 \
-  --crop-images
 
 # %% [markdown]
 # ## T4 smoke-test QLoRA
@@ -115,13 +119,37 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
 
 # %% [markdown]
 # ## Upload curated dataset
+#
+# Stage to Colab local SSD first, then upload with tar-shard packing.
+# `upload-dataset` packs image folders, deletes the previous Hub version, and uploads the new one.
+#
+# Run the curate step locally or in Colab only when you need to publish a fresh curated build:
+#
+# ```bash
+# rukopys curate --raw-dir {RAW_DIR} --output-dir {CURATED_DIR} \
+#   --include-silver --max-silver 1000 --crop-images
+# ```
 
 # %%
+from pathlib import Path
+
 HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
+STAGING_DIR = Path("/content/hf_upload_staging/rukopys_mvp")
+
+STAGING_DIR.parent.mkdir(parents=True, exist_ok=True)
+!rsync -a --info=progress2 "{CURATED_DIR}/" "{STAGING_DIR}/"
+
+!du -sh "{STAGING_DIR}"
+!find "{STAGING_DIR}" -type f | wc -l
+
 !rukopys upload-dataset \
-  --dataset-dir {CURATED_DIR} \
+  --dataset-dir {STAGING_DIR} \
   --repo-id {HF_DATASET_ID} \
-  --private
+  --private \
+  --pack \
+  --replace-existing
+
+print(f"https://huggingface.co/datasets/{HF_DATASET_ID}")
 
 # %% [markdown]
 # ## Inference and submission

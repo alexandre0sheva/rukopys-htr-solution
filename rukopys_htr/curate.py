@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import random
 import shutil
 from collections import Counter
@@ -9,11 +10,20 @@ from typing import Any
 from PIL import Image
 from tqdm import tqdm
 
-from .constants import QUALITY_WEIGHTS, REGION_TYPES, TRANSCRIBED_TYPES
+from .constants import (
+    QUALITY_WEIGHTS,
+    READING_ORDER_ROW_BAND,
+    REGION_TYPES,
+    SOURCE_DATASET,
+    TRANSCRIBED_TYPES,
+)
 from .geometry import clamp_bbox, yolo_bbox
 from .io import load_split
 from .jsonl import write_jsonl
+from .prompts import page_to_regions_json_prompt, transcribe_region_prompt
 from .schemas import PageRecord, Region
+
+logger = logging.getLogger(__name__)
 
 
 def _quality_weight(annotation_source: str | None) -> float:
@@ -22,6 +32,7 @@ def _quality_weight(annotation_source: str | None) -> float:
 
 def _copy_image(src: Path, dst: Path) -> bool:
     if not src.exists():
+        logger.warning("Missing image for copy: %s", src)
         return False
     dst.parent.mkdir(parents=True, exist_ok=True)
     if src.resolve() != dst.resolve():
@@ -114,9 +125,17 @@ def _write_yolo_artifacts(
         encoding="utf-8",
     )
 
+    split_rows = [
+        {"file_name": page.file_name, "image": page.image_name, "split": split_name}
+        for page in pages
+        if (split_name := assignments.get(page.file_name)) is not None
+    ]
+    write_jsonl(yolo_dir / "split_assignments.jsonl", split_rows)
+
 
 def _crop_region(src_path: Path, bbox: list[int], dst_path: Path) -> bool:
     if not src_path.exists():
+        logger.warning("Missing image for crop: %s", src_path)
         return False
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(src_path) as image:
@@ -130,6 +149,20 @@ def _write_dataset_card(output_dir: Path, stats: dict[str, Any]) -> None:
     card_dir.mkdir(parents=True, exist_ok=True)
     type_counts = "\n".join(f"- `{k}`: {v}" for k, v in sorted(stats["region_types"].items()))
     source_counts = "\n".join(f"- `{k}`: {v}" for k, v in sorted(stats["sources"].items()))
+    citation_block = (
+        "```bibtex\n"
+        "@dataset{rukopys_2026,\n"
+        "  title        = {RUKOPYS}: Ukrainian Handwritten Text Recognition Dataset,\n"
+        "  author       = {Dmytro Voitekh and Volodymyr Zmiivskyyi and Oleksii Molchanovskyi},\n"
+        "  organization = {Ukrainian Catholic University},\n"
+        "  year         = {2026},\n"
+        "  license      = {CC BY-NC-SA 4.0},\n"
+        f"  url          = {{https://huggingface.co/datasets/{SOURCE_DATASET}}},\n"
+        "  note         = {First large-scale Ukrainian HTR dataset; from 1920s archival "
+        "documents to 2025 school homework and exams}\n"
+        "}\n"
+        "```"
+    )
     card = f"""---
 license: cc-by-nc-sa-4.0
 task_categories:
@@ -147,8 +180,8 @@ tags:
 
 # RUKOPYS Curated MVP
 
-Curated derivative of `UkrainianCatholicUniversity/rukopys` for the Kaggle
-Handwritten to Data challenge.
+Curated derivative of [`{SOURCE_DATASET}`](https://huggingface.co/datasets/{SOURCE_DATASET})
+for Ukrainian handwriting recognition training.
 
 ## Contents
 
@@ -158,6 +191,9 @@ Handwritten to Data challenge.
 - `page_sft.jsonl`: full-page image to structured JSON examples.
 - `yolo/`: YOLO-format layout detection dataset.
 - `crops/`: region crops for transcription fine-tuning, if exported.
+- `_pack_manifest.json`: tar-shard manifest when the dataset is uploaded in packed form.
+
+Use `rukopys download-curated` to download and automatically unpack tar shards.
 
 ## Stats
 
@@ -181,6 +217,13 @@ Quality weights are assigned by annotation source:
 - `annotator`: 1.0
 - `volunteer`: 0.75
 - `auto`: 0.35
+
+## Source Dataset
+
+This dataset is derived from
+[`{SOURCE_DATASET}`](https://huggingface.co/datasets/{SOURCE_DATASET}).
+
+{citation_block}
 """
     (output_dir / "README.md").write_text(card, encoding="utf-8")
     (card_dir / "README.md").write_text(card, encoding="utf-8")
@@ -257,9 +300,9 @@ def curate_dataset(
                         "region_type": region.type,
                         "source": page.source,
                         "quality_weight": quality_weight,
-                        "prompt": (
-                            "Transcribe this Ukrainian document region exactly. "
-                            "Preserve punctuation, correction markers, and LaTeX where applicable."
+                        "prompt": transcribe_region_prompt(
+                            source=page.source,
+                            region_type=region.type,
                         ),
                         "answer": region.text,
                     }
@@ -274,16 +317,15 @@ def curate_dataset(
                     "source": page.source,
                     "annotation_source": page.annotation_source,
                     "quality_weight": quality_weight,
-                    "prompt": (
-                        "Return a JSON array of document regions for this page. "
-                        "Each item must contain bbox [x1,y1,x2,y2], type, and text. "
-                        "Use exact transcription. Use empty text for image and graph regions."
-                    ),
+                    "prompt": page_to_regions_json_prompt(source=page.source),
                     "answer": [
                         region.to_submission_dict()
                         for region in sorted(
                             page.regions,
-                            key=lambda item: (item.bbox[1] // 40, item.bbox[0]),
+                            key=lambda item: (
+                                item.bbox[1] // READING_ORDER_ROW_BAND,
+                                item.bbox[0],
+                            ),
                         )
                     ],
                 }

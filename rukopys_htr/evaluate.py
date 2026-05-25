@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
+from collections import defaultdict
 from pathlib import Path
 
 from .geometry import bbox_iou
 from .io import load_predictions_jsonl, load_split
-from .schemas import Region
+from .jsonl import read_jsonl
+from .schemas import PageRecord, Region
+
+logger = logging.getLogger(__name__)
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -55,14 +60,11 @@ def _match_regions(
     return matches
 
 
-def evaluate_predictions(
-    raw_dir: Path,
-    predictions_jsonl: Path,
-    iou_threshold: float = 0.5,
+def _compute_page_metrics(
+    truth_pages: dict[str, PageRecord],
+    predictions: dict[str, list[Region]],
+    iou_threshold: float,
 ) -> dict[str, float]:
-    truth_pages = {page.image_name: page for page in load_split(raw_dir, "train")}
-    predictions = load_predictions_jsonl(predictions_jsonl)
-
     tp = fp = fn = 0
     cer_sum = 0.0
     text_matches = 0
@@ -89,3 +91,111 @@ def evaluate_predictions(
         "cer": mean_cer,
         "proxy_score": f1 * (1.0 - min(mean_cer, 1.0)),
     }
+
+
+def _grouped_metrics(
+    truth_pages: dict[str, PageRecord],
+    predictions: dict[str, list[Region]],
+    iou_threshold: float,
+    key_fn,
+) -> dict[str, dict[str, float]]:
+    grouped_truth: dict[str, dict[str, PageRecord]] = defaultdict(dict)
+    grouped_predictions: dict[str, dict[str, list[Region]]] = defaultdict(dict)
+    for image, page in truth_pages.items():
+        key = str(key_fn(page) or "unknown")
+        grouped_truth[key][image] = page
+        grouped_predictions[key][image] = predictions.get(image, [])
+
+    return {
+        key: _compute_page_metrics(grouped_truth[key], grouped_predictions[key], iou_threshold)
+        for key in sorted(grouped_truth)
+    }
+
+
+def load_yolo_val_pages(curated_dir: Path) -> dict[str, PageRecord]:
+    val_dir = curated_dir / "yolo" / "images" / "val"
+    if not val_dir.exists():
+        return {}
+
+    val_names = {path.name for path in val_dir.glob("*") if path.is_file()}
+    metadata_path = curated_dir / "metadata.jsonl"
+    if not metadata_path.exists():
+        return {}
+
+    pages: dict[str, PageRecord] = {}
+    for row in read_jsonl(metadata_path):
+        page = PageRecord.from_dict(row, split=str(row.get("split", "train")), base_dir=curated_dir)
+        if page.image_name in val_names:
+            pages[page.image_name] = page
+    return pages
+
+
+def evaluate_predictions(
+    raw_dir: Path,
+    predictions_jsonl: Path,
+    iou_threshold: float = 0.5,
+    *,
+    split: str = "train",
+    by_source: bool = False,
+    by_annotation_source: bool = False,
+) -> dict[str, float | dict[str, dict[str, float]]]:
+    if split == "yolo_val":
+        raise ValueError("Use evaluate_curated_val() for split='yolo_val'")
+
+    truth_pages = {page.image_name: page for page in load_split(raw_dir, split)}
+    predictions = load_predictions_jsonl(predictions_jsonl)
+    metrics = _compute_page_metrics(truth_pages, predictions, iou_threshold)
+    if by_source:
+        metrics["by_source"] = _grouped_metrics(
+            truth_pages,
+            predictions,
+            iou_threshold,
+            key_fn=lambda page: page.source,
+        )
+    if by_annotation_source:
+        metrics["by_annotation_source"] = _grouped_metrics(
+            truth_pages,
+            predictions,
+            iou_threshold,
+            key_fn=lambda page: page.annotation_source,
+        )
+    return metrics
+
+
+def evaluate_curated_val(
+    curated_dir: Path,
+    predictions_jsonl: Path,
+    iou_threshold: float = 0.5,
+    *,
+    by_source: bool = False,
+    by_annotation_source: bool = False,
+) -> dict[str, float | dict[str, dict[str, float]]]:
+    truth_pages = load_yolo_val_pages(curated_dir)
+    if not truth_pages:
+        logger.warning("No YOLO val pages found under %s", curated_dir)
+        return {
+            "matched_regions": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "cer": 0.0,
+            "proxy_score": 0.0,
+        }
+
+    predictions = load_predictions_jsonl(predictions_jsonl)
+    metrics = _compute_page_metrics(truth_pages, predictions, iou_threshold)
+    if by_source:
+        metrics["by_source"] = _grouped_metrics(
+            truth_pages,
+            predictions,
+            iou_threshold,
+            key_fn=lambda page: page.source,
+        )
+    if by_annotation_source:
+        metrics["by_annotation_source"] = _grouped_metrics(
+            truth_pages,
+            predictions,
+            iou_threshold,
+            key_fn=lambda page: page.annotation_source,
+        )
+    return metrics
