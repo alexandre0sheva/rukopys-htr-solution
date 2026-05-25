@@ -35,8 +35,8 @@ Upload after local training:
 
 ```bash
 rukopys upload-model \
-  --model-dir runs/vlm_page_json_qlora \
-  --repo-id AlexandreSheva/rukopys-page-vlm-qlora \
+  --model-dir runs/qwen3_vl_8b_page_qlora \
+  --repo-id AlexandreSheva/rukopys-qwen3-vl-8b-page-qlora \
   --private
 ```
 
@@ -45,10 +45,10 @@ Or push from the training command:
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
-  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
-  --output-dir runs/vlm_page_json_qlora \
+  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --output-dir runs/qwen3_vl_8b_page_qlora \
   --push-to-hub \
-  --hub-model-id AlexandreSheva/rukopys-page-vlm-qlora
+  --hub-model-id AlexandreSheva/rukopys-qwen3-vl-8b-page-qlora
 ```
 
 The training output is a PEFT/LoRA adapter folder plus processor files. Inference can load that adapter folder directly.

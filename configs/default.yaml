@@ -1,8 +1,8 @@
 source_dataset: UkrainianCatholicUniversity/rukopys
 models:
   detector: yolo11n.pt
-  vlm_base: Qwen/Qwen2.5-VL-3B-Instruct
-  vlm_fallback: Qwen/Qwen2-VL-2B-Instruct
+  vlm_base: Qwen/Qwen3-VL-8B-Instruct
+  vlm_fallback: Qwen/Qwen3-VL-2B-Instruct
 curation:
   include_silver: true
   max_silver: null

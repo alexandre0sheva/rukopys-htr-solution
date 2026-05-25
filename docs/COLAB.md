@@ -8,9 +8,9 @@ Select `Runtime -> Change runtime type -> GPU`.
 
 Recommended mapping:
 
-- T4: `Qwen/Qwen2-VL-2B-Instruct`, page SFT smoke tests, low sequence length.
-- L4: `Qwen/Qwen2.5-VL-3B-Instruct`, practical MVP training.
-- A100: 3B or 7B runs with longer context and more steps.
+- T4: `Qwen/Qwen3-VL-2B-Instruct`, page SFT smoke tests, low sequence length.
+- L4: `Qwen/Qwen3-VL-4B-Instruct`, practical MVP training.
+- A100: `Qwen/Qwen3-VL-8B-Instruct` runs with longer context and more steps.
 
 ## 2. Clone and Install
 
@@ -80,12 +80,12 @@ For a fast smoke test, reduce `--max-silver` to `100` or omit `--include-silver`
 rukopys train-vlm-qlora \
   --train-jsonl /content/drive/MyDrive/rukopys-htr/data/curated/rukopys_mvp/page_sft.jsonl \
   --preset colab_t4_fast \
-  --output-dir /content/drive/MyDrive/rukopys-htr/runs/vlm_page_t4 \
+  --output-dir /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_2b_page_t4 \
   --sample-limit 300 \
   --max-steps 100 \
   --batch-size 1 \
   --push-to-hub \
-  --hub-model-id AlexandreSheva/rukopys-page-vlm-t4
+  --hub-model-id AlexandreSheva/rukopys-qwen3-vl-2b-page-t4
 ```
 
 ## 7. Train QLoRA on L4/A100
@@ -93,8 +93,8 @@ rukopys train-vlm-qlora \
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl /content/drive/MyDrive/rukopys-htr/data/curated/rukopys_mvp/page_sft.jsonl \
-  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
-  --output-dir /content/drive/MyDrive/rukopys-htr/runs/vlm_page_3b \
+  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --output-dir /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_8b_page \
   --max-steps 600 \
   --batch-size 1 \
   --grad-accum-steps 8 \
@@ -102,7 +102,7 @@ rukopys train-vlm-qlora \
   --lora-r 16 \
   --lora-alpha 32 \
   --push-to-hub \
-  --hub-model-id AlexandreSheva/rukopys-page-vlm-3b
+  --hub-model-id AlexandreSheva/rukopys-qwen3-vl-8b-page
 ```
 
 ## 8. Optional Detector
@@ -123,7 +123,7 @@ rukopys train-detector \
 rukopys infer \
   --mode page-vlm \
   --test-dir /content/drive/MyDrive/rukopys-htr/data/raw/rukopys/test \
-  --vlm-model /content/drive/MyDrive/rukopys-htr/runs/vlm_page_3b \
+  --vlm-model /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_8b_page \
   --output-jsonl /content/drive/MyDrive/rukopys-htr/outputs/page_predictions.jsonl
 
 rukopys make-submission \

@@ -15,7 +15,7 @@ This is a working first version with executable pipeline code. It can:
 
 ## Model Choice
 
-The default QLoRA base model is `Qwen/Qwen2.5-VL-3B-Instruct`.
+The default QLoRA base model is `Qwen/Qwen3-VL-8B-Instruct`.
 
 It is configurable in three places:
 
@@ -26,9 +26,17 @@ It is configurable in three places:
 
 Recommended presets:
 
-- Colab T4: `Qwen/Qwen2-VL-2B-Instruct`
-- Colab L4/A100: `Qwen/Qwen2.5-VL-3B-Instruct`
-- stronger GPU baseline: `Qwen/Qwen2.5-VL-7B-Instruct`
+- Colab T4: `Qwen/Qwen3-VL-2B-Instruct`
+- Colab L4: `Qwen/Qwen3-VL-4B-Instruct`
+- A100 quality baseline: `Qwen/Qwen3-VL-8B-Instruct`
+- multi-GPU quality baseline: `Qwen/Qwen3-VL-32B-Instruct`
+- teacher / external inference baseline: `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8`
+
+Qwen3-VL is the current Qwen vision-language generation. The official lineup includes
+dense 2B/4B/8B/32B models and MoE 30B-A3B/235B-A22B models. For this Kaggle pipeline,
+8B is the default because it is the strongest practical QLoRA target for a single high-memory GPU.
+See [docs/QWEN3_VL.md](/Users/alexander/Documents/htr-test/docs/QWEN3_VL.md) for the model
+selection notes.
 
 ## Install
 
@@ -116,7 +124,7 @@ Crop transcription baseline:
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl data/curated/rukopys_mvp/vlm_sft.jsonl \
-  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
+  --base-model Qwen/Qwen3-VL-8B-Instruct \
   --output-dir runs/vlm_crop_qlora \
   --max-steps 600 \
   --batch-size 1 \
@@ -129,8 +137,8 @@ Full-page structured baseline:
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
-  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
-  --output-dir runs/vlm_page_json_qlora \
+  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --output-dir runs/qwen3_vl_8b_page_qlora \
   --max-steps 600 \
   --batch-size 1 \
   --grad-accum-steps 8 \
@@ -143,7 +151,7 @@ For quick Colab T4 smoke tests:
 rukopys train-vlm-qlora \
   --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
   --preset colab_t4_fast \
-  --output-dir runs/vlm_page_json_t4_smoke \
+  --output-dir runs/qwen3_vl_2b_page_t4_smoke \
   --sample-limit 200 \
   --max-steps 50 \
   --batch-size 1
@@ -168,7 +176,7 @@ Full-page VLM:
 rukopys infer \
   --mode page-vlm \
   --test-dir data/raw/rukopys/test \
-  --vlm-model runs/vlm_page_json_qlora \
+  --vlm-model runs/qwen3_vl_8b_page_qlora \
   --output-jsonl outputs/page_predictions.jsonl
 ```
 
@@ -212,8 +220,8 @@ Upload a fine-tuned model folder:
 
 ```bash
 rukopys upload-model \
-  --model-dir runs/vlm_page_json_qlora \
-  --repo-id AlexandreSheva/rukopys-page-vlm-qlora \
+  --model-dir runs/qwen3_vl_8b_page_qlora \
+  --repo-id AlexandreSheva/rukopys-qwen3-vl-8b-page-qlora \
   --private
 ```
 
@@ -222,10 +230,10 @@ You can also push directly at the end of training:
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
-  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
-  --output-dir runs/vlm_page_json_qlora \
+  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --output-dir runs/qwen3_vl_8b_page_qlora \
   --push-to-hub \
-  --hub-model-id AlexandreSheva/rukopys-page-vlm-qlora
+  --hub-model-id AlexandreSheva/rukopys-qwen3-vl-8b-page-qlora
 ```
 
 For very large folders, use the Hugging Face CLI resumable uploader:
@@ -273,8 +281,8 @@ Open [notebooks/colab_quickstart.py](/Users/alexander/Documents/htr-test/noteboo
 
 Colab guidance:
 
-- T4: use `Qwen/Qwen2-VL-2B-Instruct`, `--max-length 768`, LoRA rank 8, and `--sample-limit` for tests.
-- L4/A100: use `Qwen/Qwen2.5-VL-3B-Instruct`; try 7B only after the 3B path works.
+- T4: use `Qwen/Qwen3-VL-2B-Instruct`, `--max-length 768`, LoRA rank 8, and `--sample-limit` for tests.
+- L4: use `Qwen/Qwen3-VL-4B-Instruct`; move to `Qwen/Qwen3-VL-8B-Instruct` on A100.
 - Keep batch size at 1 and increase `--grad-accum-steps`.
 - Mount Google Drive for persistent `data/`, `runs/`, and `outputs/`.
 - Push checkpoints to Hugging Face with `--push-to-hub` so runtime disconnects do not lose the trained adapter.

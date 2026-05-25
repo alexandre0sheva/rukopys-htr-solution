@@ -66,11 +66,11 @@ os.environ["HF_TOKEN"] = getpass.getpass("HF_TOKEN: ")
 # ## T4 smoke-test QLoRA
 
 # %%
-HF_MODEL_ID = "AlexandreSheva/rukopys-page-vlm-t4"
+HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-2b-page-t4"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
   --preset colab_t4_fast \
-  --output-dir {RUNS_DIR}/vlm_page_t4 \
+  --output-dir {RUNS_DIR}/qwen3_vl_2b_page_t4 \
   --sample-limit 300 \
   --max-steps 100 \
   --batch-size 1 \
@@ -83,11 +83,11 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-page-vlm-t4"
 # Use this cell instead of the T4 smoke-test when you have enough VRAM.
 
 # %%
-HF_MODEL_ID = "AlexandreSheva/rukopys-page-vlm-3b"
+HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
-  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
-  --output-dir {RUNS_DIR}/vlm_page_3b \
+  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --output-dir {RUNS_DIR}/qwen3_vl_8b_page \
   --max-steps 600 \
   --batch-size 1 \
   --grad-accum-steps 8 \
@@ -114,7 +114,7 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 !rukopys infer \
   --mode page-vlm \
   --test-dir {RAW_DIR}/test \
-  --vlm-model {RUNS_DIR}/vlm_page_3b \
+  --vlm-model {RUNS_DIR}/qwen3_vl_8b_page \
   --output-jsonl {OUTPUTS_DIR}/page_predictions.jsonl
 
 # %%

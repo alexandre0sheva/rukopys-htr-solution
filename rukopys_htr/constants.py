@@ -1,7 +1,7 @@
 SOURCE_DATASET = "UkrainianCatholicUniversity/rukopys"
 DEFAULT_DETECTOR_MODEL = "yolo11n.pt"
-DEFAULT_VLM_BASE_MODEL = "Qwen/Qwen2.5-VL-3B-Instruct"
-COLAB_T4_VLM_BASE_MODEL = "Qwen/Qwen2-VL-2B-Instruct"
+DEFAULT_VLM_BASE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
+COLAB_T4_VLM_BASE_MODEL = "Qwen/Qwen3-VL-2B-Instruct"
 
 REGION_TYPES = [
     "handwritten",
