@@ -4,7 +4,14 @@ from pathlib import Path
 
 from PIL import Image
 
-from rukopys_htr.pack import is_packed, pack_curated, unpack_curated
+from rukopys_htr.pack import (
+    HUB_SAFE_FILES_PER_DIRECTORY,
+    has_loose_packable_files,
+    is_packed,
+    pack_curated,
+    unpack_curated,
+    validate_hub_layout,
+)
 
 
 def _make_pack_fixture(root: Path, rel_dir: str, file_count: int) -> None:
@@ -48,3 +55,35 @@ def test_pack_is_idempotent(tmp_path: Path) -> None:
     assert first["packed_dirs"] == 1
     assert second["already_packed"] is True
     assert second["total_files"] == 4
+
+
+def test_repacks_when_manifest_exists_with_loose_files(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "curated"
+    _make_pack_fixture(dataset_dir, "crops/silver", file_count=6)
+
+    first = pack_curated(dataset_dir, max_files_per_shard=2)
+    assert first["shard_count"] == 3
+
+    _make_pack_fixture(dataset_dir, "crops/silver", file_count=4)
+    assert has_loose_packable_files(dataset_dir)
+
+    second = pack_curated(dataset_dir, max_files_per_shard=2)
+    assert "already_packed" not in second
+    assert second["total_files"] == 4
+    assert len(list((dataset_dir / "crops/silver").glob("shard-*.tar"))) == 2
+    validate_hub_layout(dataset_dir)
+
+
+def test_validate_hub_layout_rejects_too_many_loose_files(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "curated"
+    directory = dataset_dir / "crops/silver"
+    directory.mkdir(parents=True)
+    for index in range(HUB_SAFE_FILES_PER_DIRECTORY + 1):
+        (directory / f"sample_{index}.jpg").write_bytes(b"x")
+
+    try:
+        validate_hub_layout(dataset_dir, max_files_per_directory=100)
+    except ValueError as exc:
+        assert "crops/silver" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

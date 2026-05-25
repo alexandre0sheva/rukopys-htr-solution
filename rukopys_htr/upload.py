@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
-from .pack import is_packed, pack_curated
+from .pack import ensure_packed_for_hub, validate_hub_layout
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +162,13 @@ def upload_folder_to_hub(
         raise FileNotFoundError(local_dir)
 
     upload_dir = local_dir.resolve()
-    if pack and not is_packed(upload_dir):
+    if pack:
         pack_kwargs = {}
         if max_files_per_shard is not None:
             pack_kwargs["max_files_per_shard"] = max_files_per_shard
-        pack_stats = pack_curated(upload_dir, **pack_kwargs)
+        pack_stats = ensure_packed_for_hub(upload_dir, **pack_kwargs)
         logger.info("Packed curated dataset before upload: %s", pack_stats)
+        validate_hub_layout(upload_dir)
 
     api = HfApi()
     if replace_existing:

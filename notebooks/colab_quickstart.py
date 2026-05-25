@@ -143,8 +143,8 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
 # ## Upload curated dataset
 #
 # Run this after **Option B** curation, or whenever you want to publish an updated curated build.
-# Stage to Colab local SSD first, then upload with tar-shard packing.
-# `upload-dataset` packs image folders, deletes the previous Hub version, and uploads the new one.
+# Stage to Colab local SSD with `rsync --delete`, pack into tar shards, then upload.
+# `upload-dataset --pack` validates layout and repacks if staging is inconsistent.
 
 # %%
 from pathlib import Path
@@ -153,10 +153,13 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 STAGING_DIR = Path("/content/hf_upload_staging/rukopys_mvp")
 
 STAGING_DIR.parent.mkdir(parents=True, exist_ok=True)
-!rsync -a --info=progress2 "{CURATED_DIR}/" "{STAGING_DIR}/"
+# Mirror curated data exactly; without --delete stale shards/manifest can block repacking.
+!rsync -a --delete --info=progress2 "{CURATED_DIR}/" "{STAGING_DIR}/"
+!rm -rf "{STAGING_DIR}/.cache"
 
 !du -sh "{STAGING_DIR}"
 !find "{STAGING_DIR}" -type f | wc -l
+!rukopys pack-curated --dataset-dir {STAGING_DIR}
 
 !rukopys upload-dataset \
   --dataset-dir {STAGING_DIR} \
