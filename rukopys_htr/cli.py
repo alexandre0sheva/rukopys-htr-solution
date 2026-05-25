@@ -208,7 +208,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="replace_existing",
         help="Keep previous Hub files and upload additively",
     )
+    p.add_argument(
+        "--recreate-repo",
+        action="store_true",
+        help="Delete and recreate the Hub repo when replacing (resets download stats)",
+    )
     p.add_argument("--max-files-per-shard", type=int, default=2000)
+    p.add_argument("--num-workers", type=int, default=8)
 
     p = sub.add_parser("upload-model", help="Upload model artifact folder to Hugging Face")
     p.add_argument("--model-dir", type=_path, required=True)
@@ -458,7 +464,9 @@ def main(argv: list[str] | None = None) -> int:
             commit_message="Upload curated RUKOPYS MVP dataset",
             pack=args.pack,
             replace_existing=args.replace_existing,
+            recreate_repo=args.recreate_repo,
             max_files_per_shard=args.max_files_per_shard,
+            num_workers=args.num_workers,
         )
         print(url)
         return 0

@@ -49,12 +49,17 @@ os.environ["HF_TOKEN"] = getpass.getpass("HF_TOKEN: ")
 !hf auth whoami
 
 # %% [markdown]
-# ## Download curated dataset
+# ## Prepare data — pick one path
 #
-# Skip local curation by downloading the packed curated dataset from Hugging Face.
-# It is unpacked automatically into the normal training layout.
+# Run **either** Option A **or** Option B below (not both).
 #
-# You still need the raw dataset for `sample_submission.csv` and the test split used at inference time.
+# - **Option A (fast):** download the pre-curated dataset from Hugging Face. Also download raw for `sample_submission.csv` and the test split used at inference.
+# - **Option B (fresh curation):** download the original RUKOPYS dataset and curate locally. Use this when you changed curation settings or want to publish a new curated build.
+
+# %% [markdown]
+# ### Option A: Download pre-curated dataset
+#
+# Packed tar shards are downloaded from Hugging Face and unpacked automatically.
 
 # %%
 HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
@@ -64,7 +69,24 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
   --repo-id {HF_DATASET_ID}
 
 # %%
+# Still needed for sample_submission.csv and test inference, even when using Option A.
 !rukopys download --output {RAW_DIR}
+
+# %% [markdown]
+# ### Option B: Download raw and curate
+#
+# Skip Option A if you run these cells instead.
+
+# %%
+!rukopys download --output {RAW_DIR}
+
+# %%
+!rukopys curate \
+  --raw-dir {RAW_DIR} \
+  --output-dir {CURATED_DIR} \
+  --include-silver \
+  --max-silver 1000 \
+  --crop-images
 
 # %% [markdown]
 # ## T4 smoke-test QLoRA
@@ -120,15 +142,9 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
 # %% [markdown]
 # ## Upload curated dataset
 #
+# Run this after **Option B** curation, or whenever you want to publish an updated curated build.
 # Stage to Colab local SSD first, then upload with tar-shard packing.
 # `upload-dataset` packs image folders, deletes the previous Hub version, and uploads the new one.
-#
-# Run the curate step locally or in Colab only when you need to publish a fresh curated build:
-#
-# ```bash
-# rukopys curate --raw-dir {RAW_DIR} --output-dir {CURATED_DIR} \
-#   --include-silver --max-silver 1000 --crop-images
-# ```
 
 # %%
 from pathlib import Path
