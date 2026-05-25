@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+data/raw/
+data/curated/
+outputs/
+runs/
+
+*.csv
+!sample_submission.csv
+.env
+kaggle.json

@@ -1,0 +1,28 @@
+source_dataset: UkrainianCatholicUniversity/rukopys
+models:
+  detector: yolo11n.pt
+  vlm_base: Qwen/Qwen2.5-VL-3B-Instruct
+  vlm_fallback: Qwen/Qwen2-VL-2B-Instruct
+curation:
+  include_silver: true
+  max_silver: null
+  crop_images: true
+  page_sft: true
+  val_fraction: 0.15
+  seed: 42
+quality_weights:
+  annotator: 1.0
+  volunteer: 0.75
+  auto: 0.35
+region_types:
+  - handwritten
+  - printed
+  - formula
+  - table
+  - annotation
+  - image
+  - graph
+inference:
+  detector_confidence: 0.25
+  detector_iou: 0.5
+  mode: detector_vlm

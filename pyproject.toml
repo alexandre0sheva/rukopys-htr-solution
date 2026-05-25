@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rukopys-htr-solution"
+version = "0.1.0"
+description = "MVP pipeline for the Kaggle Handwritten to Data / RUKOPYS challenge."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "huggingface_hub>=0.24.0",
+  "pillow>=10.0.0",
+  "pyyaml>=6.0.0",
+  "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+data = [
+  "datasets>=2.20.0",
+  "pandas>=2.0.0",
+  "pyarrow>=15.0.0",
+]
+kaggle = [
+  "kaggle>=1.6.17",
+]
+detector = [
+  "ultralytics>=8.3.0",
+]
+vlm = [
+  "accelerate>=0.33.0",
+  "bitsandbytes>=0.43.0; platform_system != 'Darwin'",
+  "peft>=0.12.0",
+  "torch>=2.3.0",
+  "transformers>=4.45.0",
+  "trl>=0.10.0",
+]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+rukopys = "rukopys_htr.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rukopys_htr*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

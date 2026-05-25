@@ -1,0 +1,28 @@
+presets:
+  colab_t4_fast:
+    detector: yolo11n.pt
+    vlm_base: Qwen/Qwen2-VL-2B-Instruct
+    max_steps: 200
+    max_length: 768
+    batch_size: 1
+    grad_accum_steps: 8
+    lora_r: 8
+    lora_alpha: 16
+  colab_l4_balanced:
+    detector: yolo11s.pt
+    vlm_base: Qwen/Qwen2.5-VL-3B-Instruct
+    max_steps: 600
+    max_length: 1024
+    batch_size: 1
+    grad_accum_steps: 8
+    lora_r: 16
+    lora_alpha: 32
+  a100_quality:
+    detector: yolo11m.pt
+    vlm_base: Qwen/Qwen2.5-VL-7B-Instruct
+    max_steps: 1500
+    max_length: 1536
+    batch_size: 1
+    grad_accum_steps: 4
+    lora_r: 32
+    lora_alpha: 64
