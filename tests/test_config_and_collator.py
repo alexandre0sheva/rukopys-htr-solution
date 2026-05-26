@@ -4,7 +4,12 @@ from pathlib import Path
 
 from rukopys_htr.cli import _load_model_preset
 from rukopys_htr.config import load_yaml_config, resolve_value
-from rukopys_htr.train_vlm import VisionDataCollator, _mask_labels_to_assistant_only, _truncate_batch_from_right
+from rukopys_htr.train_vlm import (
+    VisionDataCollator,
+    _mask_labels_to_assistant_only,
+    _truncate_batch_from_right,
+    _weighted_sampler_trainer_class,
+)
 
 
 class FakeTensor:
@@ -58,6 +63,23 @@ class FakeTensor:
 
     def __eq__(self, other: int) -> FakeTensor:
         return FakeTensor([[1 if value == other else 0 for value in row] for row in self.rows])
+
+
+def test_weighted_sampler_trainer_uses_custom_sampler() -> None:
+    class FakeTrainer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def _get_train_sampler(self):
+            return "default"
+
+    custom_sampler = object()
+    trainer_cls = _weighted_sampler_trainer_class(FakeTrainer)
+    trainer = trainer_cls(train_sampler=custom_sampler)
+    assert trainer._get_train_sampler() is custom_sampler
+
+    default_trainer = trainer_cls(train_sampler=None)
+    assert default_trainer._get_train_sampler() == "default"
 
 
 def test_load_default_config() -> None:

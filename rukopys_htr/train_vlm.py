@@ -184,6 +184,20 @@ def _split_train_eval_rows(
     return train_rows, eval_rows
 
 
+def _weighted_sampler_trainer_class(Trainer: type) -> type:
+    class WeightedSamplerTrainer(Trainer):
+        def __init__(self, *args, train_sampler=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._train_sampler = train_sampler
+
+        def _get_train_sampler(self, train_dataset=None):
+            if self._train_sampler is not None:
+                return self._train_sampler
+            return super()._get_train_sampler(train_dataset)
+
+    return WeightedSamplerTrainer
+
+
 def train_vlm_qlora(config: QLoRAConfig) -> Path:
     try:
         import torch
@@ -256,6 +270,7 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         max_length=config.max_length,
     )
 
+    train_sampler = None
     if config.use_weighted_sampling and len(train_dataset) > 1:
         try:
             from torch.utils.data import WeightedRandomSampler
@@ -269,6 +284,7 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         except ImportError:
             train_sampler = None
 
+    WeightedSamplerTrainer = _weighted_sampler_trainer_class(Trainer)
     args = TrainingArguments(
         output_dir=str(config.output_dir),
         max_steps=config.max_steps,
@@ -290,7 +306,7 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         per_device_eval_batch_size=config.batch_size,
     )
 
-    trainer = Trainer(
+    trainer = WeightedSamplerTrainer(
         model=model,
         args=args,
         train_dataset=train_dataset,
