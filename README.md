@@ -195,8 +195,11 @@ rukopys infer \
   --mode page-vlm \
   --test-dir data/raw/rukopys/test \
   --vlm-model runs/qwen3_vl_8b_page_qlora \
+  --max-pixels 401408 \
   --output-jsonl outputs/page_predictions.jsonl
 ```
+
+On Colab T4, cap image resolution to avoid OOM (`262144` for 8B, `131072` if still tight). Match `--max-pixels` to the training preset when possible.
 
 VLM inference uses 4-bit loading by default on CUDA. To disable it:
 

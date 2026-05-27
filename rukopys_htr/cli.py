@@ -11,6 +11,7 @@ from .constants import (
     DEFAULT_DETECTOR_CONFIDENCE,
     DEFAULT_DETECTOR_IOU,
     DEFAULT_DETECTOR_MODEL,
+    DEFAULT_INFERENCE_MAX_PIXELS,
     DEFAULT_PAGE_MAX_NEW_TOKENS,
     DEFAULT_REGION_MAX_NEW_TOKENS,
     DEFAULT_VLM_BASE_MODEL,
@@ -156,6 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detector-iou", type=float)
     p.add_argument("--region-max-new-tokens", type=int)
     p.add_argument("--page-max-new-tokens", type=int)
+    p.add_argument(
+        "--max-pixels",
+        type=int,
+        help="Cap image resolution for VLM inference (match training preset on low VRAM GPUs).",
+    )
     p.add_argument("--ensemble-iou-threshold", type=float, default=0.5)
     p.add_argument(
         "--no-load-in-4bit",
@@ -394,12 +400,18 @@ def main(argv: list[str] | None = None) -> int:
             if args.page_max_new_tokens is not None
             else inference.get("page_max_new_tokens", DEFAULT_PAGE_MAX_NEW_TOKENS)
         )
+        max_pixels = (
+            args.max_pixels
+            if args.max_pixels is not None
+            else inference.get("max_pixels", DEFAULT_INFERENCE_MAX_PIXELS)
+        )
 
         if mode in {"detector-vlm", "ensemble"} and args.vlm_model:
             transcriber = VisionTextGenerationTranscriber(
                 args.vlm_model,
                 load_in_4bit=load_in_4bit,
                 max_new_tokens=region_max_new_tokens,
+                max_pixels=max_pixels,
             )
         if mode in {"page-vlm", "ensemble"}:
             if not args.vlm_model:
@@ -408,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.vlm_model,
                 max_new_tokens=page_max_new_tokens,
                 load_in_4bit=load_in_4bit,
+                max_pixels=max_pixels,
             )
         if mode == "ensemble" and not args.detector_model:
             raise ValueError("--mode ensemble requires --detector-model")

@@ -90,6 +90,10 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 
 # %% [markdown]
 # ## T4 smoke-test QLoRA
+#
+# Restart the runtime before this cell if you loaded other models earlier.
+# The `colab_t4_fast` preset uses conservative memory settings
+# (`max_length=1024`, `max_pixels=262144`).
 
 # %%
 HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-2b-page-t4"
@@ -177,7 +181,9 @@ print(f"https://huggingface.co/datasets/{HF_DATASET_ID}")
 !rukopys infer \
   --mode page-vlm \
   --test-dir {RAW_DIR}/test \
-  --vlm-model {RUNS_DIR}/qwen3_vl_8b_page \
+  --vlm-model {RUNS_DIR}/qwen3_vl_2b_page_t4 \
+  --max-pixels 262144 \
+  --page-max-new-tokens 1536 \
   --output-jsonl {OUTPUTS_DIR}/page_predictions.jsonl
 
 # %%

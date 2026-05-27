@@ -12,8 +12,8 @@ Official lineup used for this project:
 
 | Preset | Model | Intended use |
 | --- | --- | --- |
-| `colab_t4_fast` | `Qwen/Qwen3-VL-2B-Instruct` | Colab T4 smoke tests |
-| `colab_t4_quality` | `Qwen/Qwen3-VL-4B-Instruct` | Colab T4 quality runs with 4-bit QLoRA |
+| `colab_t4_fast` | `Qwen/Qwen3-VL-2B-Instruct` | Colab T4 smoke tests (`max_length=1024`, `max_pixels=262144`) |
+| `colab_t4_quality` | `Qwen/Qwen3-VL-4B-Instruct` | Colab T4 quality runs with 4-bit QLoRA (`max_length=1536`, `max_pixels=401408`) |
 | `colab_l4_balanced` | `Qwen/Qwen3-VL-4B-Instruct` | Colab L4 practical runs |
 | `a100_quality` | `Qwen/Qwen3-VL-8B-Instruct` | default quality QLoRA target |
 | `multi_gpu_32b` | `Qwen/Qwen3-VL-32B-Instruct` | multi-GPU QLoRA experiments |

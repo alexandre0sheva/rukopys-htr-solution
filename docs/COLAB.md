@@ -137,6 +137,7 @@ rukopys infer \
   --mode page-vlm \
   --test-dir /content/drive/MyDrive/rukopys-htr/data/raw/rukopys/test \
   --vlm-model /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_8b_page \
+  --max-pixels 401408 \
   --output-jsonl /content/drive/MyDrive/rukopys-htr/outputs/page_predictions.jsonl
 
 rukopys make-submission \
@@ -153,7 +154,10 @@ Inference loads VLMs in 4-bit on CUDA by default. Add `--no-load-in-4bit` only f
 
 ## Practical Notes
 
-- If you hit OOM, lower `--max-length`, set `--sample-limit`, or move from the 4B T4 preset to the 2B smoke-test preset.
+- If you hit OOM, restart the runtime first so the 17GB model download is not competing with stale GPU allocations.
+- Then lower `--max-length` (try `768`) and `--max-pixels` (try `131072`), or move from the 4B T4 preset to the 2B smoke-test preset.
+- During inference, always pass `--max-pixels` on T4/L4. Without it, full-page images can request tens of GB of VRAM.
+- `--sample-limit` only reduces dataset size, not per-step VRAM.
 - Keep `--batch-size 1` and scale effective batch with `--grad-accum-steps`.
 - Always push to Hub during real runs. Colab sessions can disconnect.
 - Start with `page_sft.jsonl`; use `vlm_sft.jsonl` only for detector+crop recognizer experiments.

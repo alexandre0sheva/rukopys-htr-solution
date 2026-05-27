@@ -1,19 +1,86 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
+from .constants import DEFAULT_INFERENCE_MAX_PIXELS
 
-def configure_training_processor(processor: Any, max_pixels: int | None = None) -> None:
+logger = logging.getLogger(__name__)
+
+QWEN3_VL_IMAGE_FACTOR = 32
+
+
+def configure_processor_pixels(processor: Any, max_pixels: int | None = None) -> None:
     if max_pixels is None:
         return
     image_processor = processor.image_processor
+    min_pixels = min(getattr(image_processor, "min_pixels", max_pixels // 4), max_pixels)
     image_processor.max_pixels = max_pixels
-    size = getattr(image_processor, "size", None)
-    if isinstance(size, dict):
-        size["longest_edge"] = max_pixels
+    image_processor.min_pixels = min_pixels
+    # Qwen VL resize reads size["longest_edge"/"shortest_edge"], not max_pixels alone.
+    image_processor.size = {
+        "longest_edge": max_pixels,
+        "shortest_edge": min_pixels,
+    }
+
+
+def resolve_pixel_budget(
+    processor: Any,
+    max_pixels: int | None = None,
+) -> tuple[int, int]:
+    if max_pixels is not None:
+        configure_processor_pixels(processor, max_pixels)
+    image_processor = processor.image_processor
+    size = getattr(image_processor, "size", None) or {}
+    resolved_max = int(
+        size.get("longest_edge")
+        or getattr(image_processor, "max_pixels", None)
+        or DEFAULT_INFERENCE_MAX_PIXELS
+    )
+    resolved_min = int(
+        size.get("shortest_edge")
+        or getattr(image_processor, "min_pixels", None)
+        or min(resolved_max // 4, resolved_max)
+    )
+    return resolved_max, resolved_min
+
+
+def prepare_vlm_image(
+    image: Image.Image,
+    *,
+    max_pixels: int,
+    min_pixels: int | None = None,
+    factor: int = QWEN3_VL_IMAGE_FACTOR,
+) -> Image.Image:
+    try:
+        from qwen_vl_utils.vision_process import smart_resize
+    except ImportError as exc:
+        raise RuntimeError("Install VLM extras with `pip install -e '.[vlm]'`.") from exc
+
+    min_pixels = min_pixels or min(max_pixels // 4, max_pixels)
+    width, height = image.size
+    resized_height, resized_width = smart_resize(
+        height,
+        width,
+        factor=factor,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+    )
+    if (resized_width, resized_height) == (width, height):
+        return image
+    return image.resize((resized_width, resized_height), Image.Resampling.BICUBIC)
+
+
+def _processor_source(model_path_obj: Path, fallback_id: str) -> str:
+    if any(
+        (model_path_obj / name).exists()
+        for name in ("preprocessor_config.json", "processor_config.json")
+    ):
+        return str(model_path_obj)
+    return fallback_id
 
 
 def load_vision_model_and_processor(
@@ -60,7 +127,7 @@ def load_vision_model_and_processor(
         base_model = AutoVisionModel.from_pretrained(
             peft_config.base_model_name_or_path,
             quantization_config=quantization_config,
-            torch_dtype=compute_dtype if cuda_available else torch.float32,
+            dtype=compute_dtype if cuda_available else torch.float32,
             device_map="auto" if cuda_available else None,
         )
         model = PeftModel.from_pretrained(base_model, model_id)
@@ -68,14 +135,20 @@ def load_vision_model_and_processor(
         model = AutoVisionModel.from_pretrained(
             model_id,
             quantization_config=quantization_config,
-            torch_dtype=compute_dtype if cuda_available else torch.float32,
+            dtype=compute_dtype if cuda_available else torch.float32,
             device_map="auto" if cuda_available else None,
         )
 
-    processor = AutoProcessor.from_pretrained(processor_id)
-    if for_training:
-        configure_training_processor(processor, max_pixels)
+    processor_source = _processor_source(model_path_obj, processor_id)
+    processor = AutoProcessor.from_pretrained(processor_source)
+    effective_max, effective_min = resolve_pixel_budget(processor, max_pixels)
     if not for_training:
+        logger.info(
+            "VLM pixel budget: max=%s min=%s (processor=%s)",
+            effective_max,
+            effective_min,
+            processor_source,
+        )
         model.eval()
     return torch, processor, model
 
@@ -93,7 +166,12 @@ def run_vlm_generation(
     prompt: str,
     *,
     max_new_tokens: int = 192,
+    max_pixels: int | None = None,
+    min_pixels: int | None = None,
 ) -> str:
+    if max_pixels is not None:
+        image = prepare_vlm_image(image, max_pixels=max_pixels, min_pixels=min_pixels)
+
     messages = [
         {
             "role": "user",

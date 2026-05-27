@@ -22,7 +22,7 @@ from .jsonl import read_jsonl, write_jsonl
 from .postprocess import regions_from_model_json
 from .prompts import page_to_regions_json_prompt, transcribe_region_prompt
 from .schemas import PageRecord, Region
-from .vlm_loading import load_vision_model_and_processor, run_vlm_generation
+from .vlm_loading import load_vision_model_and_processor, resolve_pixel_budget, run_vlm_generation
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +104,14 @@ class VisionTextGenerationTranscriber:
         prompt: str | None = None,
         load_in_4bit: bool = True,
         max_new_tokens: int = DEFAULT_REGION_MAX_NEW_TOKENS,
+        max_pixels: int | None = None,
     ):
         self.torch, self.processor, self.model = load_vision_model_and_processor(
             model_path,
             load_in_4bit=load_in_4bit,
+            max_pixels=max_pixels,
         )
+        self.max_pixels, self.min_pixels = resolve_pixel_budget(self.processor, max_pixels)
         self.default_prompt = prompt
         self.max_new_tokens = max_new_tokens
 
@@ -131,6 +134,8 @@ class VisionTextGenerationTranscriber:
             crop,
             prompt,
             max_new_tokens=self.max_new_tokens,
+            max_pixels=self.max_pixels,
+            min_pixels=self.min_pixels,
         )
 
 
@@ -141,11 +146,14 @@ class VisionPageJsonDetector:
         prompt: str | None = None,
         max_new_tokens: int = DEFAULT_PAGE_MAX_NEW_TOKENS,
         load_in_4bit: bool = True,
+        max_pixels: int | None = None,
     ):
         self.torch, self.processor, self.model = load_vision_model_and_processor(
             model_path,
             load_in_4bit=load_in_4bit,
+            max_pixels=max_pixels,
         )
+        self.max_pixels, self.min_pixels = resolve_pixel_budget(self.processor, max_pixels)
         self.default_prompt = prompt
         self.max_new_tokens = max_new_tokens
 
@@ -168,6 +176,8 @@ class VisionPageJsonDetector:
             page_image,
             prompt,
             max_new_tokens=self.max_new_tokens,
+            max_pixels=self.max_pixels,
+            min_pixels=self.min_pixels,
         )
         regions = regions_from_model_json(
             decoded,
