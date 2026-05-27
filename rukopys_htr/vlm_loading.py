@@ -168,6 +168,92 @@ def decode_new_tokens(processor: Any, generated: Any, input_ids: Any) -> str:
     return processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 
 
+def decode_new_tokens_batch(processor: Any, generated: Any, input_ids: Any) -> list[str]:
+    generated_ids = generated[:, input_ids.shape[-1] :]
+    return [
+        item.strip()
+        for item in processor.batch_decode(generated_ids, skip_special_tokens=True)
+    ]
+
+
+def _build_generation_text(processor: Any, image: Image.Image, prompt: str) -> str:
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": prompt},
+            ],
+        }
+    ]
+    return processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+
+def _to_model_device(inputs: Any, device: Any) -> dict[str, Any]:
+    return {key: value.to(device) for key, value in inputs.items()}
+
+
+def _generation_kwargs(processor: Any, max_new_tokens: int) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "num_beams": 1,
+        "use_cache": True,
+    }
+    pad_token_id = getattr(getattr(processor, "tokenizer", None), "pad_token_id", None)
+    if pad_token_id is not None:
+        kwargs["pad_token_id"] = pad_token_id
+    return kwargs
+
+
+def run_vlm_generation_batch(
+    torch_module: Any,
+    processor: Any,
+    model: Any,
+    images: list[Image.Image],
+    prompts: list[str],
+    *,
+    max_new_tokens: int = 192,
+    max_pixels: int | None = None,
+    min_pixels: int | None = None,
+) -> list[str]:
+    if len(images) != len(prompts):
+        raise ValueError("images and prompts must have the same length")
+    if not images:
+        return []
+
+    prepared_images = [
+        prepare_vlm_image(image, max_pixels=max_pixels, min_pixels=min_pixels)
+        if max_pixels is not None
+        else image
+        for image in images
+    ]
+    texts = [
+        _build_generation_text(processor, image, prompt)
+        for image, prompt in zip(prepared_images, prompts, strict=True)
+    ]
+    tokenizer = getattr(processor, "tokenizer", None)
+    previous_padding_side = getattr(tokenizer, "padding_side", None)
+    if tokenizer is not None and previous_padding_side is not None:
+        tokenizer.padding_side = "left"
+    try:
+        inputs = processor(text=texts, images=prepared_images, padding=True, return_tensors="pt")
+    finally:
+        if tokenizer is not None and previous_padding_side is not None:
+            tokenizer.padding_side = previous_padding_side
+    inputs = _to_model_device(inputs, model.device)
+    with torch_module.inference_mode():
+        generated = model.generate(
+            **inputs,
+            **_generation_kwargs(processor, max_new_tokens=max_new_tokens),
+        )
+    return decode_new_tokens_batch(processor, generated, inputs["input_ids"])
+
+
 def run_vlm_generation(
     torch_module: Any,
     processor: Any,
@@ -179,25 +265,13 @@ def run_vlm_generation(
     max_pixels: int | None = None,
     min_pixels: int | None = None,
 ) -> str:
-    if max_pixels is not None:
-        image = prepare_vlm_image(image, max_pixels=max_pixels, min_pixels=min_pixels)
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
-    text = processor.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    inputs = processor(text=[text], images=[image], return_tensors="pt")
-    inputs = {key: value.to(model.device) for key, value in inputs.items()}
-    with torch_module.inference_mode():
-        generated = model.generate(**inputs, max_new_tokens=max_new_tokens)
-    return decode_new_tokens(processor, generated, inputs["input_ids"])
+    return run_vlm_generation_batch(
+        torch_module,
+        processor,
+        model,
+        [image],
+        [prompt],
+        max_new_tokens=max_new_tokens,
+        max_pixels=max_pixels,
+        min_pixels=min_pixels,
+    )[0]

@@ -11,7 +11,7 @@ from rukopys_htr.evaluate import evaluate_predictions
 from rukopys_htr.infer import EmptyDetector, EmptyTranscriber, run_inference
 from rukopys_htr.io import load_predictions_jsonl, write_submission
 from rukopys_htr.jsonl import write_jsonl
-from rukopys_htr.schemas import Region
+from rukopys_htr.schemas import PageRecord, Region
 
 
 def _make_raw_dataset(root: Path) -> None:
@@ -106,6 +106,58 @@ def test_empty_inference_and_submission(tmp_path: Path) -> None:
     rows = list(csv.DictReader(submission.open("r", encoding="utf-8")))
     assert rows[0]["image"] == "test-1.jpg"
     assert json.loads(rows[0]["regions"]) == []
+
+
+def test_page_vlm_inference_batches_pages(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    _make_raw_dataset(raw)
+    Image.new("RGB", (200, 100), "white").save(raw / "test" / "images" / "test-2.jpg")
+    write_jsonl(
+        raw / "test" / "metadata.jsonl",
+        [
+            {
+                "file_name": "images/test-1.jpg",
+                "image_width": 200,
+                "image_height": 100,
+                "source": "dictation",
+            },
+            {
+                "file_name": "images/test-2.jpg",
+                "image_width": 200,
+                "image_height": 100,
+                "source": "dictation",
+            },
+        ],
+    )
+    predictions = tmp_path / "page_predictions.jsonl"
+
+    class FakePageDetector:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        def detect_batch_for_pages(
+            self,
+            pages: list[tuple[Path, PageRecord]],
+        ) -> list[list[Region]]:
+            self.batch_sizes.append(len(pages))
+            return [
+                [Region(bbox=[10, 20, 110, 50], type="handwritten", text=page.image_name)]
+                for _, page in pages
+            ]
+
+    page_detector = FakePageDetector()
+    count = run_inference(
+        raw / "test",
+        predictions,
+        page_detector=page_detector,  # type: ignore[arg-type]
+        batch_size=2,
+    )
+
+    rows = [json.loads(line) for line in predictions.read_text(encoding="utf-8").splitlines()]
+    assert count == 2
+    assert page_detector.batch_sizes == [2]
+    assert [row["image"] for row in rows] == ["test-1.jpg", "test-2.jpg"]
+    assert rows[1]["regions"][0]["text"] == "test-2.jpg"
 
 
 def test_proxy_evaluation(tmp_path: Path) -> None:

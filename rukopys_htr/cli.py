@@ -158,6 +158,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--region-max-new-tokens", type=int)
     p.add_argument("--page-max-new-tokens", type=int)
     p.add_argument(
+        "--batch-size",
+        type=int,
+        help="Number of pages to generate at once for page-vlm inference.",
+    )
+    p.add_argument(
         "--max-pixels",
         type=int,
         help="Cap image resolution for VLM inference (match training preset on low VRAM GPUs).",
@@ -411,6 +416,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.max_pixels is not None
             else inference.get("max_pixels", DEFAULT_INFERENCE_MAX_PIXELS)
         )
+        batch_size = (
+            args.batch_size
+            if args.batch_size is not None
+            else inference.get("batch_size", 1)
+        )
 
         if mode in {"detector-vlm", "ensemble"} and args.vlm_model:
             transcriber = VisionTextGenerationTranscriber(
@@ -439,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             page_detector=page_detector,
             ensemble=mode == "ensemble",
             ensemble_iou_threshold=args.ensemble_iou_threshold,
+            batch_size=batch_size,
         )
         print(f"Wrote predictions for {count} images to {args.output_jsonl}")
         return 0

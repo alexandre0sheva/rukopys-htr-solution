@@ -219,7 +219,10 @@ def _weighted_sampler_trainer_class(Trainer: type) -> type:
         def _get_train_sampler(self, train_dataset=None):
             if self._train_sampler is not None:
                 return self._train_sampler
-            return super()._get_train_sampler(train_dataset)
+            try:
+                return super()._get_train_sampler(train_dataset)
+            except TypeError:
+                return super()._get_train_sampler()
 
     return WeightedSamplerTrainer
 

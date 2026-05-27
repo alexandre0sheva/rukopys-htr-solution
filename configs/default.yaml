@@ -30,6 +30,7 @@ inference:
   region_max_new_tokens: 192
   page_max_new_tokens: 2048
   max_pixels: 262144
+  batch_size: 1
 training:
   eval_fraction: 0.1
   eval_steps: 50

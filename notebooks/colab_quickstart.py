@@ -132,15 +132,26 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-4b-page-t4"
 HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
-  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --preset a100_quality \
   --output-dir {RUNS_DIR}/qwen3_vl_8b_page \
-  --max-steps 600 \
-  --batch-size 1 \
-  --grad-accum-steps 8 \
-  --max-length 6144 \
-  --max-pixels 802816 \
-  --lora-r 16 \
-  --lora-alpha 32 \
+  --max-steps 1200 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75 \
+  --push-to-hub \
+  --hub-model-id {HF_MODEL_ID}
+
+# %% [markdown]
+# ## A100 80GB high-quality QLoRA
+
+# %%
+HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-32b-page"
+!rukopys train-vlm-qlora \
+  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
+  --preset a100_32b_quality \
+  --output-dir {RUNS_DIR}/qwen3_vl_32b_page \
+  --max-steps 1200 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75 \
   --push-to-hub \
   --hub-model-id {HF_MODEL_ID}
 
@@ -185,6 +196,7 @@ print(f"https://huggingface.co/datasets/{HF_DATASET_ID}")
   --vlm-model {RUNS_DIR}/qwen3_vl_2b_page_t4 \
   --max-pixels 262144 \
   --page-max-new-tokens 1536 \
+  --batch-size 4 \
   --output-jsonl {OUTPUTS_DIR}/page_predictions.jsonl
 
 # %%

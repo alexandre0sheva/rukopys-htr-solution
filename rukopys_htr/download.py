@@ -38,7 +38,10 @@ def download_curated_dataset(
             "unpack_skipped": True,
         }
     if not is_packed(path):
-        print(f"Dataset at {path} is already unpacked (no {path.name}/_pack_manifest.json).", flush=True)
+        print(
+            f"Dataset at {path} is already unpacked (no {path.name}/_pack_manifest.json).",
+            flush=True,
+        )
         return path, {
             "unpacked_dirs": 0,
             "restored_files": 0,

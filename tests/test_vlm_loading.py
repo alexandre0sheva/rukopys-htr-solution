@@ -5,7 +5,11 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from rukopys_htr.vlm_loading import configure_processor_pixels, prepare_vlm_image, resolve_pixel_budget
+from rukopys_htr.vlm_loading import (
+    configure_processor_pixels,
+    prepare_vlm_image,
+    resolve_pixel_budget,
+)
 
 
 def test_configure_processor_pixels_updates_size_dict() -> None:

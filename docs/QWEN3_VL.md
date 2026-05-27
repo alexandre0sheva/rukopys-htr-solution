@@ -16,6 +16,7 @@ Official lineup used for this project:
 | `colab_t4_quality` | `Qwen/Qwen3-VL-4B-Instruct` | Colab T4 quality runs with 4-bit QLoRA (`max_length=1536`, `max_pixels=401408`) |
 | `colab_l4_balanced` | `Qwen/Qwen3-VL-4B-Instruct` | Colab L4 practical runs |
 | `a100_quality` | `Qwen/Qwen3-VL-8B-Instruct` | default quality QLoRA target |
+| `a100_32b_quality` | `Qwen/Qwen3-VL-32B-Instruct` | single A100 80GB high-quality experiment |
 | `multi_gpu_32b` | `Qwen/Qwen3-VL-32B-Instruct` | multi-GPU QLoRA experiments |
 | `teacher_moe_235b` | `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8` | teacher inference / pseudo-labeling |
 
@@ -23,8 +24,8 @@ Official lineup used for this project:
 
 Use `Qwen/Qwen3-VL-8B-Instruct` as the default model for the Kaggle solution. It is new-generation,
 Apache-2.0, strong for OCR/document parsing, and still realistic for QLoRA on high-memory single-GPU
-hardware. Use 2B/4B for Colab, and reserve 32B/235B for larger hardware or API/server-based teacher
-generation.
+hardware. On A100 80GB, 32B QLoRA is worth testing with a conservative pixel budget. Use 2B/4B for
+T4/L4 Colab, and reserve 235B for larger hardware or API/server-based teacher generation.
 
 The project trains VLMs with 4-bit NF4 QLoRA on CUDA. This is intentional: for this task, a larger
 model in 4-bit is usually a better trade-off than a smaller model loaded in fp16, as long as the

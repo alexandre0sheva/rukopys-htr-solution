@@ -10,7 +10,7 @@ Recommended mapping:
 
 - T4: `Qwen/Qwen3-VL-2B-Instruct` for smoke tests, `Qwen/Qwen3-VL-4B-Instruct` for 4-bit quality runs.
 - L4: `Qwen/Qwen3-VL-4B-Instruct`, practical MVP training.
-- A100: `Qwen/Qwen3-VL-8B-Instruct` runs with longer context and more steps.
+- A100: `Qwen/Qwen3-VL-8B-Instruct` for the main quality run; `Qwen/Qwen3-VL-32B-Instruct` for high-quality experiments on 80GB.
 
 ## 2. Clone and Install
 
@@ -106,17 +106,27 @@ rukopys train-vlm-qlora \
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl /content/drive/MyDrive/rukopys-htr/data/curated/rukopys_mvp/page_sft.jsonl \
-  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --preset a100_quality \
   --output-dir /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_8b_page \
-  --max-steps 600 \
-  --batch-size 1 \
-  --grad-accum-steps 8 \
-  --max-length 6144 \
-  --max-pixels 802816 \
-  --lora-r 16 \
-  --lora-alpha 32 \
+  --max-steps 1200 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75 \
   --push-to-hub \
   --hub-model-id AlexandreSheva/rukopys-qwen3-vl-8b-page
+```
+
+For an A100 80GB 32B run:
+
+```bash
+rukopys train-vlm-qlora \
+  --train-jsonl /content/drive/MyDrive/rukopys-htr/data/curated/rukopys_mvp/page_sft.jsonl \
+  --preset a100_32b_quality \
+  --output-dir /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_32b_page \
+  --max-steps 1200 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75 \
+  --push-to-hub \
+  --hub-model-id AlexandreSheva/rukopys-qwen3-vl-32b-page
 ```
 
 ## 8. Optional Detector
@@ -139,6 +149,7 @@ rukopys infer \
   --test-dir /content/drive/MyDrive/rukopys-htr/data/raw/rukopys/test \
   --vlm-model /content/drive/MyDrive/rukopys-htr/runs/qwen3_vl_8b_page \
   --max-pixels 401408 \
+  --batch-size 4 \
   --output-jsonl /content/drive/MyDrive/rukopys-htr/outputs/page_predictions.jsonl
 
 rukopys make-submission \
@@ -159,6 +170,7 @@ Inference loads VLMs in 4-bit on CUDA by default. Add `--no-load-in-4bit` only f
 - Then lower `--max-length` (try `768`) and `--max-pixels` (try `131072`), or move from the 4B T4 preset to the 2B smoke-test preset.
 - For page-level QLoRA, always pass `--max-pixels`. Without it, full-page scans can produce tens of thousands of vision tokens; truncating `--max-length` then breaks Qwen3-VL with `Image features and image tokens do not match`.
 - During inference, always pass `--max-pixels` on T4/L4. Without it, full-page images can request tens of GB of VRAM.
+- On A100 80GB, use `--batch-size 4` for page-VLM inference first, then try `6` or `8` if VRAM allows.
 - `--sample-limit` only reduces dataset size, not per-step VRAM.
 - Keep `--batch-size 1` and scale effective batch with `--grad-accum-steps`.
 - Always push to Hub during real runs. Colab sessions can disconnect.

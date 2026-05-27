@@ -30,6 +30,7 @@ Recommended presets:
 - Colab T4 quality: `Qwen/Qwen3-VL-4B-Instruct` with 4-bit QLoRA
 - Colab L4: `Qwen/Qwen3-VL-4B-Instruct`
 - A100 quality baseline: `Qwen/Qwen3-VL-8B-Instruct`
+- A100 high-quality experiment: `Qwen/Qwen3-VL-32B-Instruct`
 - multi-GPU quality baseline: `Qwen/Qwen3-VL-32B-Instruct`
 - teacher / external inference baseline: `Qwen/Qwen3-VL-235B-A22B-Instruct-FP8`
 
@@ -144,13 +145,23 @@ Full-page structured baseline:
 ```bash
 rukopys train-vlm-qlora \
   --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
-  --base-model Qwen/Qwen3-VL-8B-Instruct \
+  --preset a100_quality \
   --output-dir runs/qwen3_vl_8b_page_qlora \
-  --max-steps 600 \
-  --batch-size 1 \
-  --grad-accum-steps 8 \
-  --max-length 6144 \
-  --max-pixels 802816
+  --max-steps 1200 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75
+```
+
+A100 80GB high-quality experiment:
+
+```bash
+rukopys train-vlm-qlora \
+  --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
+  --preset a100_32b_quality \
+  --output-dir runs/qwen3_vl_32b_page_qlora \
+  --max-steps 1200 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75
 ```
 
 For quick Colab T4 smoke tests:
@@ -197,10 +208,11 @@ rukopys infer \
   --test-dir data/raw/rukopys/test \
   --vlm-model runs/qwen3_vl_8b_page_qlora \
   --max-pixels 401408 \
+  --batch-size 4 \
   --output-jsonl outputs/page_predictions.jsonl
 ```
 
-On Colab T4, cap image resolution to avoid OOM (`262144` for 8B, `131072` if still tight). Match `--max-pixels` to the training preset when possible.
+On Colab T4, cap image resolution to avoid OOM (`262144` for 8B, `131072` if still tight). On an A100 80GB, start page-VLM inference with `--batch-size 4`, then try `6` or `8` while watching memory. Match `--max-pixels` to the training preset when possible.
 
 VLM inference uses 4-bit loading by default on CUDA. To disable it:
 

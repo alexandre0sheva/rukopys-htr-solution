@@ -22,7 +22,12 @@ from .jsonl import read_jsonl, write_jsonl
 from .postprocess import regions_from_model_json
 from .prompts import page_to_regions_json_prompt, transcribe_region_prompt
 from .schemas import PageRecord, Region
-from .vlm_loading import load_vision_model_and_processor, resolve_pixel_budget, run_vlm_generation
+from .vlm_loading import (
+    load_vision_model_and_processor,
+    resolve_pixel_budget,
+    run_vlm_generation,
+    run_vlm_generation_batch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +199,56 @@ class VisionPageJsonDetector:
             logger.warning("Page-VLM returned no regions for %s", image_path)
         return regions
 
+    def detect_batch_for_pages(
+        self,
+        pages: list[tuple[Path, PageRecord]],
+    ) -> list[list[Region]]:
+        if not pages:
+            return []
+
+        images: list[Image.Image] = []
+        prompts: list[str] = []
+        for image_path, page in pages:
+            prompt = self.default_prompt or page_to_regions_json_prompt(
+                source=page.source if page else None,
+            )
+            with Image.open(image_path) as image:
+                images.append(image.convert("RGB"))
+            prompts.append(prompt)
+
+        regions_by_page = self._generate_page_regions_batch(
+            images,
+            prompts,
+            pages=pages,
+            max_new_tokens=self.max_new_tokens,
+        )
+
+        retry_indexes = [
+            index
+            for index, regions in enumerate(regions_by_page)
+            if not regions and self.max_new_tokens < DEFAULT_PAGE_MAX_NEW_TOKENS
+        ]
+        if retry_indexes:
+            retry_tokens = min(self.max_new_tokens * 2, DEFAULT_PAGE_MAX_NEW_TOKENS)
+            logger.warning(
+                "Retrying page-VLM for %d page(s) with max_new_tokens=%d",
+                len(retry_indexes),
+                retry_tokens,
+            )
+            retry_regions = self._generate_page_regions_batch(
+                [images[index] for index in retry_indexes],
+                [prompts[index] for index in retry_indexes],
+                pages=[pages[index] for index in retry_indexes],
+                max_new_tokens=retry_tokens,
+            )
+            for index, regions in zip(retry_indexes, retry_regions, strict=True):
+                regions_by_page[index] = regions
+
+        for (image_path, _), regions in zip(pages, regions_by_page, strict=True):
+            if not regions:
+                logger.warning("Page-VLM returned no regions for %s", image_path)
+        return regions_by_page
+
     def _generate_page_regions(
         self,
         page_image: Image.Image,
@@ -218,6 +273,33 @@ class VisionPageJsonDetector:
             image_width=image_width,
             image_height=image_height,
         )
+
+    def _generate_page_regions_batch(
+        self,
+        page_images: list[Image.Image],
+        prompts: list[str],
+        *,
+        pages: list[tuple[Path, PageRecord]],
+        max_new_tokens: int,
+    ) -> list[list[Region]]:
+        decoded_items = run_vlm_generation_batch(
+            self.torch,
+            self.processor,
+            self.model,
+            page_images,
+            prompts,
+            max_new_tokens=max_new_tokens,
+            max_pixels=self.max_pixels,
+            min_pixels=self.min_pixels,
+        )
+        return [
+            regions_from_model_json(
+                decoded,
+                image_width=page.image_width,
+                image_height=page.image_height,
+            )
+            for decoded, (_, page) in zip(decoded_items, pages, strict=True)
+        ]
 
 
 def sort_regions_reading_order(regions: list[Region]) -> list[Region]:
@@ -256,6 +338,7 @@ def run_inference(
     *,
     ensemble: bool = False,
     ensemble_iou_threshold: float = 0.5,
+    batch_size: int = 1,
 ) -> int:
     detector = detector or EmptyDetector()
     transcriber = transcriber or EmptyTranscriber()
@@ -268,8 +351,41 @@ def run_inference(
             for row in read_jsonl(test_dir / "metadata.jsonl")
         ]
 
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+
     rows = []
     json_failures = 0
+    if page_detector is not None and not ensemble and batch_size > 1:
+        for start in tqdm(range(0, len(pages), batch_size), desc="Inference"):
+            page_batch = pages[start : start + batch_size]
+            batch_inputs = [
+                (Path(page.image_path or test_dir / page.file_name), page)
+                for page in page_batch
+            ]
+            detected_batches = page_detector.detect_batch_for_pages(batch_inputs)
+            for page, (image_path, _), detected_regions in zip(
+                page_batch,
+                batch_inputs,
+                detected_batches,
+                strict=True,
+            ):
+                if not detected_regions:
+                    json_failures += 1
+                regions = _finalize_regions(detected_regions, page, image_path, transcriber)
+                rows.append(
+                    {
+                        "image": page.image_name,
+                        "regions": [region.to_full_dict() for region in regions],
+                    }
+                )
+
+        if json_failures:
+            logger.warning("Page-VLM produced empty regions on %d pages", json_failures)
+
+        write_jsonl(output_jsonl, rows)
+        return len(rows)
+
     for page in tqdm(pages, desc="Inference"):
         image_path = Path(page.image_path or test_dir / page.file_name)
         if ensemble and page_detector is not None:

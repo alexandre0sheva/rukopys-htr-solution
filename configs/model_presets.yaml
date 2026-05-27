@@ -34,9 +34,19 @@ presets:
     vlm_base: Qwen/Qwen3-VL-8B-Instruct
     max_steps: 1500
     max_length: 8192
-    max_pixels: 12845056
+    max_pixels: 1605632
     batch_size: 1
     grad_accum_steps: 4
+    lora_r: 32
+    lora_alpha: 64
+  a100_32b_quality:
+    detector: yolo11m.pt
+    vlm_base: Qwen/Qwen3-VL-32B-Instruct
+    max_steps: 1500
+    max_length: 8192
+    max_pixels: 802816
+    batch_size: 1
+    grad_accum_steps: 8
     lora_r: 32
     lora_alpha: 64
   multi_gpu_32b:
@@ -44,7 +54,7 @@ presets:
     vlm_base: Qwen/Qwen3-VL-32B-Instruct
     max_steps: 1500
     max_length: 8192
-    max_pixels: 12845056
+    max_pixels: 1605632
     batch_size: 1
     grad_accum_steps: 8
     lora_r: 32
