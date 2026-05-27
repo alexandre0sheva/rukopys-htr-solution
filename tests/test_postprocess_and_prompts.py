@@ -39,6 +39,24 @@ def test_extract_json_array_returns_empty_on_invalid_payload() -> None:
     assert extract_json_array("not json at all") == []
 
 
+def test_extract_json_array_salvages_truncated_page_output() -> None:
+    complete = (
+        '{"bbox": [1, 2, 3, 4], "type": "handwritten", "text": "first"}, '
+        '{"bbox": [5, 6, 7, 8'
+    )
+    text = f"[{complete}]"
+    items = extract_json_array(text)
+    assert len(items) == 1
+    assert items[0]["text"] == "first"
+
+
+def test_extract_json_array_parses_balanced_outer_brackets() -> None:
+    text = '[{"bbox": [1, 2, 3, 4], "type": "handwritten", "text": "ok"}]'
+    items = extract_json_array(text)
+    assert len(items) == 1
+    assert items[0]["bbox"] == [1, 2, 3, 4]
+
+
 def test_regions_from_model_json_clamps_and_normalizes_type() -> None:
     payload = json.dumps(
         [

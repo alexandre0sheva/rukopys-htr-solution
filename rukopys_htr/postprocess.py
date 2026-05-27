@@ -24,27 +24,95 @@ def extract_json_array(text: str) -> list[Any]:
     return extract_json_array_with_status(text).items
 
 
-def extract_json_array_with_status(text: str) -> JsonParseResult:
+def _strip_markdown_fence(text: str) -> str:
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
-        cleaned = re.sub(r"```$", "", cleaned).strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+    return re.sub(r"```$", "", cleaned).strip()
+
+
+def _find_balanced_array_end(text: str, start: int) -> int | None:
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _salvage_json_array_items(text: str, array_start: int) -> list[Any]:
+    decoder = json.JSONDecoder()
+    items: list[Any] = []
+    index = array_start + 1
+    while index < len(text):
+        while index < len(text) and text[index] in " \t\n\r,":
+            index += 1
+        if index >= len(text) or text[index] == "]":
+            break
+        if text[index] != "{":
+            break
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            break
+        if isinstance(value, dict):
+            items.append(value)
+        index = end
+    return items
+
+
+def extract_json_array_with_status(text: str) -> JsonParseResult:
+    cleaned = _strip_markdown_fence(text)
     start = cleaned.find("[")
-    end = cleaned.rfind("]")
-    if start == -1 or end == -1 or end <= start:
+    if start == -1:
         snippet = cleaned[:200]
         logger.warning("Failed to locate JSON array in model output: %r", snippet)
         return JsonParseResult(items=[], ok=False, error="json_array_not_found")
-    payload = cleaned[start : end + 1]
-    try:
-        value = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        logger.warning("Failed to parse JSON array from model output: %s", exc)
-        return JsonParseResult(items=[], ok=False, error=str(exc))
-    if not isinstance(value, list):
-        logger.warning("Model JSON payload is not a list: %r", type(value).__name__)
-        return JsonParseResult(items=[], ok=False, error="json_not_list")
-    return JsonParseResult(items=value, ok=True)
+
+    end = _find_balanced_array_end(cleaned, start)
+    if end is not None:
+        payload = cleaned[start : end + 1]
+        try:
+            value = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            logger.warning("Failed to parse JSON array from model output: %s", exc)
+        else:
+            if isinstance(value, list):
+                return JsonParseResult(items=value, ok=True)
+            logger.warning("Model JSON payload is not a list: %r", type(value).__name__)
+            return JsonParseResult(items=[], ok=False, error="json_not_list")
+
+    salvaged = _salvage_json_array_items(cleaned, start)
+    if salvaged:
+        logger.warning(
+            "Recovered %d region(s) from truncated or malformed page-VLM JSON",
+            len(salvaged),
+        )
+        return JsonParseResult(items=salvaged, ok=True, error="salvaged_partial_array")
+
+    if end is None:
+        logger.warning(
+            "Page-VLM JSON array appears truncated (no closing bracket); 0 complete regions"
+        )
+        return JsonParseResult(items=[], ok=False, error="json_array_truncated")
+    return JsonParseResult(items=[], ok=False, error="json_decode_error")
 
 
 def _normalize_region_type(region_type: str) -> str:

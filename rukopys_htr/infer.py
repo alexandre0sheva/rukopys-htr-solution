@@ -169,24 +169,55 @@ class VisionPageJsonDetector:
         )
         with Image.open(image_path) as image:
             page_image = image.convert("RGB")
+        regions = self._generate_page_regions(
+            page_image,
+            prompt,
+            image_width=image_width,
+            image_height=image_height,
+            max_new_tokens=self.max_new_tokens,
+        )
+        if not regions and self.max_new_tokens < DEFAULT_PAGE_MAX_NEW_TOKENS:
+            retry_tokens = min(self.max_new_tokens * 2, DEFAULT_PAGE_MAX_NEW_TOKENS)
+            logger.warning(
+                "Retrying page-VLM for %s with max_new_tokens=%d",
+                image_path,
+                retry_tokens,
+            )
+            regions = self._generate_page_regions(
+                page_image,
+                prompt,
+                image_width=image_width,
+                image_height=image_height,
+                max_new_tokens=retry_tokens,
+            )
+        if not regions:
+            logger.warning("Page-VLM returned no regions for %s", image_path)
+        return regions
+
+    def _generate_page_regions(
+        self,
+        page_image: Image.Image,
+        prompt: str,
+        *,
+        image_width: int,
+        image_height: int,
+        max_new_tokens: int,
+    ) -> list[Region]:
         decoded = run_vlm_generation(
             self.torch,
             self.processor,
             self.model,
             page_image,
             prompt,
-            max_new_tokens=self.max_new_tokens,
+            max_new_tokens=max_new_tokens,
             max_pixels=self.max_pixels,
             min_pixels=self.min_pixels,
         )
-        regions = regions_from_model_json(
+        return regions_from_model_json(
             decoded,
             image_width=image_width,
             image_height=image_height,
         )
-        if not regions:
-            logger.warning("Page-VLM returned no regions for %s", image_path)
-        return regions
 
 
 def sort_regions_reading_order(regions: list[Region]) -> list[Region]:
