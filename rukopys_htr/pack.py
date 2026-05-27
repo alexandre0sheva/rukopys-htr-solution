@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -236,17 +237,12 @@ def ensure_packed_for_hub(
     }
 
 
-def unpack_curated(dataset_dir: Path, keep_shards: bool = False) -> dict[str, Any]:
-    dataset_dir = dataset_dir.resolve()
-    manifest_path = dataset_dir / PACK_MANIFEST
-    if not manifest_path.is_file():
-        return {"unpacked_dirs": 0, "restored_files": 0, "already_unpacked": True}
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    packed_dirs: dict[str, Any] = manifest.get("packed_dirs", {})
-    restored_files = 0
-
-    for rel_dir, entry in tqdm(packed_dirs.items(), desc="Unpacking curated dataset"):
+def _collect_unpack_tasks(
+    dataset_dir: Path,
+    packed_dirs: dict[str, Any],
+) -> list[tuple[str, str, Path]]:
+    tasks: list[tuple[str, str, Path]] = []
+    for rel_dir, entry in packed_dirs.items():
         directory = dataset_dir / rel_dir
         if not directory.is_dir():
             raise FileNotFoundError(f"Missing packed directory: {directory}")
@@ -255,20 +251,70 @@ def unpack_curated(dataset_dir: Path, keep_shards: bool = False) -> dict[str, An
             shard_path = directory / shard_name
             if not shard_path.is_file():
                 raise FileNotFoundError(f"Missing shard: {shard_path}")
-            with tarfile.open(shard_path, "r") as archive:
-                if hasattr(tarfile, "data_filter"):
-                    archive.extractall(path=directory, filter="data")
-                else:
-                    archive.extractall(path=directory)
-            if not keep_shards:
-                shard_path.unlink()
+            tasks.append((rel_dir, shard_name, shard_path))
+    return tasks
 
-        restored_files += entry["file_count"]
+
+def _format_bytes(num_bytes: int) -> str:
+    if num_bytes >= 1_000_000_000:
+        return f"{num_bytes / 1_000_000_000:.2f} GB"
+    if num_bytes >= 1_000_000:
+        return f"{num_bytes / 1_000_000:.1f} MB"
+    return f"{num_bytes / 1_000:.1f} KB"
+
+
+def unpack_curated(dataset_dir: Path, keep_shards: bool = False) -> dict[str, Any]:
+    dataset_dir = dataset_dir.resolve()
+    manifest_path = dataset_dir / PACK_MANIFEST
+    if not manifest_path.is_file():
+        return {"unpacked_dirs": 0, "restored_files": 0, "already_unpacked": True}
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    packed_dirs: dict[str, Any] = manifest.get("packed_dirs", {})
+    tasks = _collect_unpack_tasks(dataset_dir, packed_dirs)
+    total_files = sum(int(entry["file_count"]) for entry in packed_dirs.values())
+    total_shard_bytes = sum(shard_path.stat().st_size for _, _, shard_path in tasks)
+    started_at = time.monotonic()
+
+    summary = (
+        f"Unpacking curated dataset at {dataset_dir}: "
+        f"{len(packed_dirs)} dirs, {len(tasks)} shards, "
+        f"~{total_files} files, {_format_bytes(total_shard_bytes)} compressed"
+    )
+    logger.info(summary)
+    print(summary, flush=True)
+
+    restored_files = 0
+    progress = tqdm(tasks, desc="Unpacking shards", unit="shard")
+    for rel_dir, shard_name, shard_path in progress:
+        progress.set_postfix_str(f"{rel_dir}/{shard_name}", refresh=False)
+        directory = dataset_dir / rel_dir
+        with tarfile.open(shard_path, "r") as archive:
+            if hasattr(tarfile, "data_filter"):
+                archive.extractall(path=directory, filter="data")
+            else:
+                archive.extractall(path=directory)
+        if not keep_shards:
+            shard_path.unlink()
+
+    restored_files = total_files
 
     if not keep_shards:
         manifest_path.unlink()
 
+    elapsed_seconds = time.monotonic() - started_at
+    done = (
+        f"Unpack complete: {restored_files} files restored in "
+        f"{elapsed_seconds / 60:.1f} min "
+        f"({_format_bytes(total_shard_bytes)} -> loose files on disk)"
+    )
+    logger.info(done)
+    print(done, flush=True)
+
     return {
         "unpacked_dirs": len(packed_dirs),
         "restored_files": restored_files,
+        "shard_count": len(tasks),
+        "compressed_bytes": total_shard_bytes,
+        "elapsed_seconds": round(elapsed_seconds, 1),
     }

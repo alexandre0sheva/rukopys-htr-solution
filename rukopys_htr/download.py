@@ -30,11 +30,20 @@ def download_curated_dataset(
     unpack: bool = True,
 ) -> tuple[Path, dict[str, Any]]:
     path = download_dataset(output_dir=output_dir, repo_id=repo_id)
-    if not unpack or not is_packed(path):
+    if not unpack:
         return path, {
             "unpacked_dirs": 0,
             "restored_files": 0,
             "already_unpacked": not is_packed(path),
+            "unpack_skipped": True,
         }
+    if not is_packed(path):
+        print(f"Dataset at {path} is already unpacked (no {path.name}/_pack_manifest.json).", flush=True)
+        return path, {
+            "unpacked_dirs": 0,
+            "restored_files": 0,
+            "already_unpacked": True,
+        }
+    print(f"Download finished. Starting tar-shard unpack in {path} ...", flush=True)
     stats = unpack_curated(path)
     return path, stats
