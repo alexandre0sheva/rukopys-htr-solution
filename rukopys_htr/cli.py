@@ -345,7 +345,13 @@ def main(argv: list[str] | None = None) -> int:
                     args, preset, config, "max_length", ("training", "max_length"), 1024
                 ),
                 max_pixels=_arg_or_config(
-                    args, preset, config, "max_pixels", ("training", "max_pixels"), None
+                    args,
+                    preset,
+                    config,
+                    "max_pixels",
+                    ("training", "max_pixels"),
+                    config.get("training", {}).get("max_pixels")
+                    or config.get("inference", {}).get("max_pixels", DEFAULT_INFERENCE_MAX_PIXELS),
                 ),
                 lora_r=_arg_or_config(args, preset, config, "lora_r", ("training", "lora_r"), 16),
                 lora_alpha=_arg_or_config(

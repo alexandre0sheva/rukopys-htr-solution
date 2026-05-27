@@ -25,6 +25,23 @@ def test_configure_processor_pixels_updates_size_dict() -> None:
     assert image_processor.size == {"longest_edge": 262_144, "shortest_edge": 65_536}
 
 
+def test_configure_processor_pixels_handles_none_min_pixels() -> None:
+    processor = SimpleNamespace(
+        image_processor=SimpleNamespace(
+            max_pixels=16_777_216,
+            min_pixels=None,
+            size={"longest_edge": 16_777_216, "shortest_edge": None},
+        )
+    )
+
+    configure_processor_pixels(processor, 802_816)
+
+    image_processor = processor.image_processor
+    assert image_processor.max_pixels == 802_816
+    assert image_processor.min_pixels == 200_704
+    assert image_processor.size == {"longest_edge": 802_816, "shortest_edge": 200_704}
+
+
 def test_resolve_pixel_budget_applies_override() -> None:
     processor = SimpleNamespace(
         image_processor=SimpleNamespace(

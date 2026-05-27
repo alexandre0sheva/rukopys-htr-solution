@@ -111,7 +111,8 @@ rukopys train-vlm-qlora \
   --max-steps 600 \
   --batch-size 1 \
   --grad-accum-steps 8 \
-  --max-length 1536 \
+  --max-length 6144 \
+  --max-pixels 802816 \
   --lora-r 16 \
   --lora-alpha 32 \
   --push-to-hub \
@@ -156,6 +157,7 @@ Inference loads VLMs in 4-bit on CUDA by default. Add `--no-load-in-4bit` only f
 
 - If you hit OOM, restart the runtime first so the 17GB model download is not competing with stale GPU allocations.
 - Then lower `--max-length` (try `768`) and `--max-pixels` (try `131072`), or move from the 4B T4 preset to the 2B smoke-test preset.
+- For page-level QLoRA, always pass `--max-pixels`. Without it, full-page scans can produce tens of thousands of vision tokens; truncating `--max-length` then breaks Qwen3-VL with `Image features and image tokens do not match`.
 - During inference, always pass `--max-pixels` on T4/L4. Without it, full-page images can request tens of GB of VRAM.
 - `--sample-limit` only reduces dataset size, not per-step VRAM.
 - Keep `--batch-size 1` and scale effective batch with `--grad-accum-steps`.

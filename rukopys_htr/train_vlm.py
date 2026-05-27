@@ -10,7 +10,11 @@ from PIL import Image
 
 from .jsonl import read_jsonl
 from .prompts import transcribe_region_prompt
-from .vlm_loading import load_vision_model_and_processor
+from .vlm_loading import (
+    load_vision_model_and_processor,
+    prepare_vlm_image,
+    resolve_pixel_budget,
+)
 
 
 @dataclass(slots=True)
@@ -75,6 +79,12 @@ def _truncate_batch_from_right(batch: dict[str, Any], max_length: int) -> None:
     input_ids = batch.get("input_ids")
     if input_ids is None or input_ids.shape[1] <= max_length:
         return
+    if batch.get("pixel_values") is not None or batch.get("image_grid_thw") is not None:
+        raise ValueError(
+            f"Tokenized batch length {input_ids.shape[1]} exceeds --max-length {max_length}. "
+            "Vision inputs cannot be truncated without breaking image token alignment. "
+            "Lower resolution with --max-pixels or raise --max-length."
+        )
     for key in ("input_ids", "attention_mask", "labels"):
         tensor = batch.get(key)
         if tensor is not None and hasattr(tensor, "shape") and tensor.shape[1] > max_length:
@@ -101,10 +111,20 @@ def _mask_labels_to_assistant_only(
 
 
 class VisionDataCollator:
-    def __init__(self, processor: Any, root: Path, max_length: int):
+    def __init__(
+        self,
+        processor: Any,
+        root: Path,
+        max_length: int,
+        *,
+        max_pixels: int | None = None,
+        min_pixels: int | None = None,
+    ):
         self.processor = processor
         self.root = root
         self.max_length = max_length
+        self.max_pixels = max_pixels
+        self.min_pixels = min_pixels
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
         texts: list[str] = []
@@ -113,6 +133,12 @@ class VisionDataCollator:
         for row in features:
             with Image.open(self.root / row["image"]) as image_file:
                 image = image_file.convert("RGB")
+            if self.max_pixels is not None:
+                image = prepare_vlm_image(
+                    image,
+                    max_pixels=self.max_pixels,
+                    min_pixels=self.min_pixels,
+                )
             answer = row["answer"]
             if not isinstance(answer, str):
                 answer = json.dumps(answer, ensure_ascii=False)
@@ -264,10 +290,13 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
         else None
     )
 
+    max_pixels, min_pixels = resolve_pixel_budget(processor, config.max_pixels)
     data_collator = VisionDataCollator(
         processor,
         root=config.train_jsonl.parent,
         max_length=config.max_length,
+        max_pixels=max_pixels,
+        min_pixels=min_pixels,
     )
 
     train_sampler = None

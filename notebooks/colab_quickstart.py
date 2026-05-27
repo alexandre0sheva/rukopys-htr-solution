@@ -137,7 +137,8 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
   --max-steps 600 \
   --batch-size 1 \
   --grad-accum-steps 8 \
-  --max-length 1536 \
+  --max-length 6144 \
+  --max-pixels 802816 \
   --lora-r 16 \
   --lora-alpha 32 \
   --push-to-hub \

@@ -33,3 +33,4 @@ inference:
 training:
   eval_fraction: 0.1
   eval_steps: 50
+  max_pixels: 401408

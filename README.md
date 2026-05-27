@@ -149,7 +149,8 @@ rukopys train-vlm-qlora \
   --max-steps 600 \
   --batch-size 1 \
   --grad-accum-steps 8 \
-  --max-length 1536
+  --max-length 6144 \
+  --max-pixels 802816
 ```
 
 For quick Colab T4 smoke tests:

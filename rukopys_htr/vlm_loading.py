@@ -13,11 +13,21 @@ logger = logging.getLogger(__name__)
 QWEN3_VL_IMAGE_FACTOR = 32
 
 
+def _positive_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def configure_processor_pixels(processor: Any, max_pixels: int | None = None) -> None:
     if max_pixels is None:
         return
     image_processor = processor.image_processor
-    min_pixels = min(getattr(image_processor, "min_pixels", max_pixels // 4), max_pixels)
+    min_pixels = min(max_pixels // 4, max_pixels)
     image_processor.max_pixels = max_pixels
     image_processor.min_pixels = min_pixels
     # Qwen VL resize reads size["longest_edge"/"shortest_edge"], not max_pixels alone.
@@ -35,14 +45,14 @@ def resolve_pixel_budget(
         configure_processor_pixels(processor, max_pixels)
     image_processor = processor.image_processor
     size = getattr(image_processor, "size", None) or {}
-    resolved_max = int(
-        size.get("longest_edge")
-        or getattr(image_processor, "max_pixels", None)
+    resolved_max = (
+        _positive_int_or_none(size.get("longest_edge"))
+        or _positive_int_or_none(getattr(image_processor, "max_pixels", None))
         or DEFAULT_INFERENCE_MAX_PIXELS
     )
-    resolved_min = int(
-        size.get("shortest_edge")
-        or getattr(image_processor, "min_pixels", None)
+    resolved_min = (
+        _positive_int_or_none(size.get("shortest_edge"))
+        or _positive_int_or_none(getattr(image_processor, "min_pixels", None))
         or min(resolved_max // 4, resolved_max)
     )
     return resolved_max, resolved_min

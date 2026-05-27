@@ -145,12 +145,23 @@ def test_truncate_batch_from_right() -> None:
         "input_ids": FakeTensor([[1, 2, 3, 4, 5]]),
         "attention_mask": FakeTensor([[1, 1, 1, 1, 1]]),
         "labels": FakeTensor([[9, 9, 9, 9, 9]]),
-        "pixel_values": FakeTensor([[1, 2, 3]]),
     }
     _truncate_batch_from_right(batch, max_length=3)
     assert batch["input_ids"].rows[0] == [1, 2, 3]
     assert batch["labels"].rows[0] == [9, 9, 9]
-    assert batch["pixel_values"].shape == (1, 3)
+
+
+def test_truncate_batch_from_right_rejects_vision_batches() -> None:
+    batch = {
+        "input_ids": FakeTensor([[1, 2, 3, 4, 5]]),
+        "pixel_values": FakeTensor([[1, 2, 3]]),
+    }
+    try:
+        _truncate_batch_from_right(batch, max_length=3)
+    except ValueError as exc:
+        assert "image token alignment" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
 
 
 def test_vision_data_collator_masks_prompt_tokens(tmp_path: Path) -> None:
