@@ -37,6 +37,11 @@ def download_curated_dataset(
     unpack: bool = True,
     max_workers: int = 16,
 ) -> tuple[Path, dict[str, Any]]:
+    if repo_id == DEFAULT_CURATED_DATASET:
+        raise ValueError(
+            "No public curated dataset is configured. Pass --repo-id with a Hugging Face dataset "
+            "repo you control, for example your-hf-username-or-org/rukopys-curated-mvp."
+        )
     path = download_dataset(output_dir=output_dir, repo_id=repo_id, max_workers=max_workers)
     if not unpack:
         return path, {

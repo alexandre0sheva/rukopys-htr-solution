@@ -1,6 +1,8 @@
 .venv/
 __pycache__/
 *.py[cod]
+.DS_Store
+.ipynb_checkpoints/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
@@ -9,8 +11,14 @@ data/raw/
 data/curated/
 outputs/
 runs/
+checkpoints/
+wandb/
 
 *.csv
 !sample_submission.csv
 .env
+.env.local
 kaggle.json
+*.safetensors
+*.pt
+*.pth

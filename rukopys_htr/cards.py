@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
+from .constants import DEFAULT_CURATED_DATASET
+
+DEFAULT_DATASET_ID = DEFAULT_CURATED_DATASET
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
 

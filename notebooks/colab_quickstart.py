@@ -1,7 +1,11 @@
 # %% [markdown]
 # # RUKOPYS HTR Colab Quickstart
 #
-# Run this notebook on a GPU runtime. T4 is enough for smoke tests; L4/A100 is better for useful QLoRA runs.
+# Run this notebook on a GPU runtime. T4 is enough for smoke tests; L4/A100 is better for useful
+# QLoRA runs.
+#
+# Replace `REPO_URL` and `HF_NAMESPACE` with values you control before publishing anything. In
+# local development, keep these in `.env`; in Colab, set them directly in this notebook.
 
 # %%
 !nvidia-smi
@@ -10,11 +14,13 @@
 # ## Clone and install
 
 # %%
-REPO_URL = "https://github.com/alexandre0sheva/rukopys-htr-solution.git"
-!git clone {REPO_URL}
-%cd rukopys-htr-solution
+REPO_URL = "https://github.com/OWNER/REPO.git"
+REPO_DIR = "/content/rukopys-htr"
+
+!git clone {REPO_URL} {REPO_DIR}
+%cd {REPO_DIR}
 !pip install -U pip
-!pip install -e ".[data,detector,vlm,kaggle]"
+!pip install -e ".[data,detector,vlm]"
 
 # %%
 %env HF_XET_HIGH_PERFORMANCE=1
@@ -36,54 +42,23 @@ RAW_DIR = "/content/rukopys-htr/data/raw/rukopys"
 CURATED_DIR = f"{WORK_ROOT}/data/curated/rukopys_mvp"
 RUNS_DIR = f"{WORK_ROOT}/runs"
 OUTPUTS_DIR = f"{WORK_ROOT}/outputs"
+HF_NAMESPACE = "your-hf-username-or-org"
 
 !mkdir -p /content/rukopys-htr/data {WORK_ROOT}/data {RUNS_DIR} {OUTPUTS_DIR}
 
 # %% [markdown]
 # ## Hugging Face login
 #
-# Create a write token at https://huggingface.co/settings/tokens.
+# Log in only if you plan to download private repos or push datasets/models.
 
 # %%
-import getpass
-import os
-
-os.environ["HF_TOKEN"] = getpass.getpass("HF_TOKEN: ")
-!hf auth login --token "$HF_TOKEN" --add-to-git-credential
+!hf auth login
 !hf auth whoami
 
 # %% [markdown]
-# ## Prepare data — pick one path
+# ## Prepare data
 #
-# Run **either** Option A **or** Option B below (not both).
-#
-# - **Option A (fast):** download the pre-curated dataset from Hugging Face. Also download raw for `sample_submission.csv` and the test split used at inference.
-# - **Option B (fresh curation):** download the original RUKOPYS dataset and curate locally. Use this when you changed curation settings or want to publish a new curated build.
-
-# %% [markdown]
-# ### Option A: Download pre-curated dataset
-#
-# Packed tar shards are downloaded from Hugging Face and unpacked automatically.
-
-# %%
-HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
-
-!rukopys download-curated \
-  --output {CURATED_DIR} \
-  --repo-id {HF_DATASET_ID}
-
-# %%
-# Still needed for sample_submission.csv and test inference, even when using Option A.
-!rukopys download \
-  --output {RAW_DIR} \
-  --max-workers 32 \
-  --allow-pattern "test/**" \
-  --allow-pattern "sample_submission.csv"
-
-# %% [markdown]
-# ### Option B: Download raw and curate
-#
-# Skip Option A if you run these cells instead.
+# Default path: download the public source dataset and curate it locally.
 
 # %%
 !rukopys download --output {RAW_DIR} --max-workers 32
@@ -97,6 +72,27 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
   --crop-images
 
 # %% [markdown]
+# ### Optional: reuse your own curated dataset
+#
+# Run these cells instead of the local curation cells if you previously published a curated dataset
+# to your own Hugging Face namespace.
+
+# %%
+HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
+
+!rukopys download-curated \
+  --output {CURATED_DIR} \
+  --repo-id {HF_DATASET_ID}
+
+# %%
+# Still needed for sample_submission.csv and test inference.
+!rukopys download \
+  --output {RAW_DIR} \
+  --max-workers 32 \
+  --allow-pattern "test/**" \
+  --allow-pattern "sample_submission.csv"
+
+# %% [markdown]
 # ## T4 smoke-test QLoRA
 #
 # Restart the runtime before this cell if you loaded other models earlier.
@@ -104,7 +100,19 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 # (`max_length=1024`, `max_pixels=262144`).
 
 # %%
-HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-2b-page-t4"
+!rukopys train-vlm-qlora \
+  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
+  --preset colab_t4_fast \
+  --output-dir {RUNS_DIR}/qwen3_vl_2b_page_t4 \
+  --sample-limit 300 \
+  --max-steps 100 \
+  --batch-size 1
+
+# %% [markdown]
+# To preserve the adapter outside Colab, add `--push-to-hub` and a model ID in your namespace:
+
+# %%
+HF_MODEL_ID = f"{HF_NAMESPACE}/rukopys-qwen3-vl-2b-page-t4"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
   --preset colab_t4_fast \
@@ -121,15 +129,12 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-2b-page-t4"
 # This uses 4-bit QLoRA with a larger 4B model. Use this after the smoke test works.
 
 # %%
-HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-4b-page-t4"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
   --preset colab_t4_quality \
   --output-dir {RUNS_DIR}/qwen3_vl_4b_page_t4 \
   --sample-limit 500 \
-  --max-steps 200 \
-  --push-to-hub \
-  --hub-model-id {HF_MODEL_ID}
+  --max-steps 200
 
 # %% [markdown]
 # ## L4/A100 practical QLoRA
@@ -137,43 +142,37 @@ HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-4b-page-t4"
 # Use this cell instead of the T4 smoke-test when you have enough VRAM.
 
 # %%
-HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-8b-page"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
   --preset a100_quality \
   --output-dir {RUNS_DIR}/qwen3_vl_8b_page \
   --max-steps 1200 \
   --eval-steps 100 \
-  --min-quality-weight 0.75 \
-  --push-to-hub \
-  --hub-model-id {HF_MODEL_ID}
+  --min-quality-weight 0.75
 
 # %% [markdown]
 # ## A100 80GB high-quality QLoRA
 
 # %%
-HF_MODEL_ID = "AlexandreSheva/rukopys-qwen3-vl-32b-page"
 !rukopys train-vlm-qlora \
   --train-jsonl {CURATED_DIR}/page_sft.jsonl \
   --preset a100_32b_quality \
   --output-dir {RUNS_DIR}/qwen3_vl_32b_page \
   --max-steps 1200 \
   --eval-steps 100 \
-  --min-quality-weight 0.75 \
-  --push-to-hub \
-  --hub-model-id {HF_MODEL_ID}
+  --min-quality-weight 0.75
 
 # %% [markdown]
 # ## Upload curated dataset
 #
-# Run this after **Option B** curation, or whenever you want to publish an updated curated build.
-# Stage to Colab local SSD with `rsync --delete`, pack into tar shards, then upload.
-# `upload-dataset --pack` validates layout and repacks if staging is inconsistent.
+# Run this after local curation, or whenever you want to publish an updated curated build. Stage to
+# Colab local SSD with `rsync --delete`, pack into tar shards, then upload. `upload-dataset --pack`
+# validates layout and repacks if staging is inconsistent.
 
 # %%
 from pathlib import Path
 
-HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
+HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
 STAGING_DIR = Path("/content/hf_upload_staging/rukopys_mvp")
 
 STAGING_DIR.parent.mkdir(parents=True, exist_ok=True)
@@ -188,7 +187,6 @@ STAGING_DIR.parent.mkdir(parents=True, exist_ok=True)
 !rukopys upload-dataset \
   --dataset-dir {STAGING_DIR} \
   --repo-id {HF_DATASET_ID} \
-  --private \
   --pack \
   --replace-existing
 
@@ -214,16 +212,3 @@ print(f"https://huggingface.co/datasets/{HF_DATASET_ID}")
   --output {OUTPUTS_DIR}/submission.csv
 
 # %% [markdown]
-# ## Kaggle submit
-#
-# Upload `kaggle.json` to Colab first, and accept the competition rules in the Kaggle web UI.
-
-# %%
-!mkdir -p ~/.kaggle
-!cp /content/kaggle.json ~/.kaggle/kaggle.json
-!chmod 600 ~/.kaggle/kaggle.json
-
-# %%
-!rukopys submit-kaggle \
-  --submission {OUTPUTS_DIR}/submission.csv \
-  --message "page-vlm qlora colab"

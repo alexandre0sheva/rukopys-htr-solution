@@ -41,13 +41,13 @@ def test_clear_hub_repo_deletes_top_level_folders() -> None:
     ]
 
     with _mock_hf_api(api):
-        action = clear_hub_repo("user/dataset", "dataset", private=True)
+        action = clear_hub_repo("example-org/dataset", "dataset", private=True)
 
     assert action == "cleared:3"
     assert api.delete_folder.call_count == 2
     api.delete_folder.assert_any_call(
         path_in_repo="crops",
-        repo_id="user/dataset",
+        repo_id="example-org/dataset",
         repo_type="dataset",
         commit_message="Remove previous dataset folder crops",
     )
@@ -60,7 +60,7 @@ def test_clear_hub_repo_can_recreate_repo() -> None:
     api.list_repo_files.return_value = ["metadata.jsonl"]
 
     with _mock_hf_api(api):
-        action = clear_hub_repo("user/dataset", "dataset", recreate=True)
+        action = clear_hub_repo("example-org/dataset", "dataset", recreate=True)
 
     assert action == "recreated"
     api.delete_repo.assert_called_once()
@@ -72,7 +72,7 @@ def test_clear_hub_repo_skips_delete_when_empty() -> None:
     api.list_repo_files.return_value = []
 
     with _mock_hf_api(api):
-        action = clear_hub_repo("user/dataset", "dataset", private=False)
+        action = clear_hub_repo("example-org/dataset", "dataset", private=False)
 
     assert action == "empty"
     api.delete_repo.assert_not_called()
@@ -91,12 +91,12 @@ def test_upload_dataset_uses_large_folder_uploader(tmp_path: Path) -> None:
     with _mock_hf_api(api):
         url = upload_folder_to_hub(
             dataset_dir,
-            repo_id="user/dataset",
+            repo_id="example-org/dataset",
             repo_type="dataset",
             replace_existing=True,
         )
 
-    assert url.endswith("datasets/user/dataset")
+    assert url.endswith("datasets/example-org/dataset")
     api.delete_folder.assert_called_once()
     api.delete_repo.assert_not_called()
     api.upload_large_folder.assert_called_once()
@@ -113,7 +113,7 @@ def test_model_card_describes_a100_v2_adapter(tmp_path: Path) -> None:
 
     readme = write_model_card(
         model_dir,
-        repo_id="AlexandreSheva/rukopys-qwen3-vl-8b-page-a100-v2",
+        repo_id="example-org/rukopys-qwen3-vl-8b-page-a100-v2",
     )
 
     card = readme.read_text(encoding="utf-8")

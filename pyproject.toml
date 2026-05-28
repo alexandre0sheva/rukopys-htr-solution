@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "MVP pipeline for the Kaggle Handwritten to Data / RUKOPYS challenge."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
 dependencies = [
   "huggingface_hub>=0.24.0",
   "pillow>=10.0.0",

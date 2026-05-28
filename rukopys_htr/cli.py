@@ -5,12 +5,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .config import load_yaml_config, resolve_value
+from .config import env_value, load_env_file, load_yaml_config, resolve_value
 from .constants import (
     DEFAULT_CURATED_DATASET,
     DEFAULT_DETECTOR_CONFIDENCE,
     DEFAULT_DETECTOR_IOU,
     DEFAULT_DETECTOR_MODEL,
+    DEFAULT_HF_NAMESPACE,
     DEFAULT_INFERENCE_MAX_PIXELS,
     DEFAULT_PAGE_MAX_NEW_TOKENS,
     DEFAULT_REGION_MAX_NEW_TOKENS,
@@ -75,8 +76,57 @@ def _arg_or_config(
     )
 
 
+def _hf_namespace() -> str | None:
+    namespace = env_value("HF_NAMESPACE")
+    if namespace and namespace != DEFAULT_HF_NAMESPACE:
+        return namespace
+    return None
+
+
+def _default_hf_dataset_id(config: dict[str, Any]) -> str:
+    env_dataset = env_value("HF_DATASET_ID") or env_value("RUKOPYS_CURATED_DATASET")
+    if env_dataset:
+        return env_dataset
+    namespace = _hf_namespace()
+    if namespace:
+        return f"{namespace}/rukopys-curated-mvp"
+    configured = config.get("curated_dataset")
+    if configured:
+        return configured
+    return DEFAULT_CURATED_DATASET
+
+
+def _default_hf_model_id() -> str | None:
+    env_model = env_value("HF_MODEL_ID") or env_value("RUKOPYS_HF_MODEL_ID")
+    if env_model:
+        return env_model
+    namespace = _hf_namespace()
+    if namespace:
+        return f"{namespace}/rukopys-qwen3-vl-8b-page-qlora"
+    return None
+
+
+def _env_private(default: bool = False) -> bool:
+    value = env_value("HF_PRIVATE") or env_value("RUKOPYS_HF_PRIVATE")
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _require_configured_dataset_id(repo_id: str) -> str:
+    if repo_id == DEFAULT_CURATED_DATASET:
+        raise ValueError("Set HF_DATASET_ID in .env or pass --repo-id.")
+    return repo_id
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rukopys", description="RUKOPYS HTR MVP pipeline")
+    parser.add_argument(
+        "--env-file",
+        type=_path,
+        default=Path(".env"),
+        help="Load dotenv-style account/repo defaults before running the command (default: .env)",
+    )
     parser.add_argument(
         "--config",
         type=_path,
@@ -201,7 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("upload-dataset", help="Upload curated dataset folder to Hugging Face")
     p.add_argument("--dataset-dir", type=_path, required=True)
-    p.add_argument("--repo-id", required=True)
+    p.add_argument("--repo-id")
     p.add_argument("--private", action="store_true")
     p.add_argument(
         "--pack",
@@ -237,7 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("upload-model", help="Upload model artifact folder to Hugging Face")
     p.add_argument("--model-dir", type=_path, required=True)
-    p.add_argument("--repo-id", required=True)
+    p.add_argument("--repo-id")
     p.add_argument("--private", action="store_true")
 
     p = sub.add_parser("submit-kaggle", help="Submit submission.csv to Kaggle")
@@ -251,6 +301,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    load_env_file(args.env_file)
     config = load_yaml_config(args.config)
 
     if args.command == "download":
@@ -266,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "download-curated":
         path, stats = download_curated_dataset(
             output_dir=args.output,
-            repo_id=args.repo_id or config.get("curated_dataset", DEFAULT_CURATED_DATASET),
+            repo_id=args.repo_id or _default_hf_dataset_id(config),
             unpack=not args.no_unpack,
             max_workers=args.max_workers,
         )
@@ -384,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
                 else config.get("training", {}).get("eval_steps", 50),
                 gradient_checkpointing=not args.no_gradient_checkpointing,
                 push_to_hub=args.push_to_hub,
-                hub_model_id=args.hub_model_id,
+                hub_model_id=args.hub_model_id or _default_hf_model_id(),
             )
         )
         print(path)
@@ -497,11 +548,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "upload-dataset":
+        repo_id = _require_configured_dataset_id(args.repo_id or _default_hf_dataset_id(config))
         url = upload_folder_to_hub(
             local_dir=args.dataset_dir,
-            repo_id=args.repo_id,
+            repo_id=repo_id,
             repo_type="dataset",
-            private=args.private,
+            private=args.private or _env_private(),
             commit_message="Upload curated RUKOPYS MVP dataset",
             pack=args.pack,
             replace_existing=args.replace_existing,
@@ -513,11 +565,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "upload-model":
+        repo_id = args.repo_id or _default_hf_model_id()
+        if not repo_id:
+            raise ValueError("Set HF_MODEL_ID in .env or pass --repo-id.")
         url = upload_folder_to_hub(
             local_dir=args.model_dir,
-            repo_id=args.repo_id,
+            repo_id=repo_id,
             repo_type="model",
-            private=args.private,
+            private=args.private or _env_private(),
             commit_message="Upload RUKOPYS MVP model artifacts",
         )
         print(url)

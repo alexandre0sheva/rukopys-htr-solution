@@ -1,5 +1,5 @@
 source_dataset: UkrainianCatholicUniversity/rukopys
-curated_dataset: AlexandreSheva/rukopys-curated-mvp
+curated_dataset: your-hf-username-or-org/rukopys-curated-mvp
 models:
   detector: yolo11n.pt
   vlm_base: Qwen/Qwen3-VL-8B-Instruct

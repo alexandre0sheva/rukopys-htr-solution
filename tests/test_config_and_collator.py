@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
-from rukopys_htr.cli import _load_model_preset
-from rukopys_htr.config import load_yaml_config, resolve_value
+from rukopys_htr.cli import (
+    _default_hf_dataset_id,
+    _default_hf_model_id,
+    _load_model_preset,
+    main,
+)
+from rukopys_htr.config import load_env_file, load_yaml_config, resolve_value
 from rukopys_htr.train_vlm import (
     VisionDataCollator,
     _mask_labels_to_assistant_only,
@@ -86,6 +92,48 @@ def test_load_default_config() -> None:
     config = load_yaml_config()
     assert config["models"]["vlm_base"] == "Qwen/Qwen3-VL-8B-Instruct"
     assert config["inference"]["mode"] == "detector-vlm"
+
+
+def test_load_env_file_sets_hub_defaults(tmp_path: Path, monkeypatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "HF_NAMESPACE=example-org",
+                "HF_DATASET_ID=example-org/rukopys-curated",
+                'HF_MODEL_ID="example-org/rukopys-model"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("HF_NAMESPACE", raising=False)
+    monkeypatch.delenv("HF_DATASET_ID", raising=False)
+    monkeypatch.delenv("HF_MODEL_ID", raising=False)
+
+    loaded = load_env_file(env_file)
+
+    assert loaded["HF_NAMESPACE"] == "example-org"
+    assert _default_hf_dataset_id({}) == "example-org/rukopys-curated"
+    assert _default_hf_model_id() == "example-org/rukopys-model"
+
+
+def test_upload_dataset_uses_env_repo_id(tmp_path: Path, monkeypatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("HF_DATASET_ID=example-org/rukopys-curated\n", encoding="utf-8")
+    dataset_dir = tmp_path / "curated"
+    dataset_dir.mkdir()
+    monkeypatch.delenv("HF_DATASET_ID", raising=False)
+
+    with patch(
+        "rukopys_htr.cli.upload_folder_to_hub",
+        return_value="https://example.test",
+    ) as upload:
+        assert (
+            main(["--env-file", str(env_file), "upload-dataset", "--dataset-dir", str(dataset_dir)])
+            == 0
+        )
+
+    assert upload.call_args.kwargs["repo_id"] == "example-org/rukopys-curated"
 
 
 def test_resolve_value_prefers_cli_over_preset_and_config() -> None:
