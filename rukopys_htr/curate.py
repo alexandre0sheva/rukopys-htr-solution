@@ -247,7 +247,8 @@ silver or automatic annotations.
 - This is a curated derivative, so it inherits the source dataset's annotation assumptions and gaps.
 - Automatic or volunteer-derived annotations can be noisy; use `quality_weight` when training.
 - The dataset is focused on Ukrainian handwriting and should not be treated as language-general OCR.
-- Page scans vary in quality, layout, and handwriting style, so validation on target documents is required.
+- Page scans vary in quality, layout, and handwriting style, so validation on target documents is
+  required.
 
 ## License
 

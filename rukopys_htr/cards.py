@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 
@@ -114,7 +113,8 @@ recognition and document-structure extraction.
 
 - Takes a full-page manuscript or handwriting image as input.
 - Produces structured JSON regions with bounding boxes, region types, language metadata, and text.
-- Targets Ukrainian handwritten text recognition (HTR), OCR post-processing, and document AI workflows.
+- Targets Ukrainian handwritten text recognition (HTR), OCR post-processing, and document AI
+  workflows.
 - Fits into the RUKOPYS pipeline as the page-level vision-language model.
 
 ## Release Positioning
@@ -194,7 +194,8 @@ The expected assistant response is JSON compatible with the RUKOPYS page schema:
 ## Limitations
 
 - The adapter was trained for Ukrainian handwriting and may not generalize to other languages.
-- It is sensitive to page resolution and preprocessing; match the training pixel budget when possible.
+- It is sensitive to page resolution and preprocessing; match the training pixel budget when
+  possible.
 - Bounding boxes and text should be evaluated together, not as independent OCR text only.
 - The training dataset inherits a non-commercial CC BY-NC-SA 4.0 license from the source data.
 

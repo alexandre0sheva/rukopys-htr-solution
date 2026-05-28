@@ -52,7 +52,7 @@ class FakeTensor:
         row_idx, col = key
         if isinstance(col, slice):
             indices = range(*col.indices(len(self.rows[row_idx])))
-            if isinstance(value, (int, float)):
+            if isinstance(value, int | float):
                 for index in indices:
                     self.rows[row_idx][index] = int(value)
             else:
