@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from huggingface_hub.utils import RepositoryNotFoundError
 
+from rukopys_htr.cards import write_model_card
 from rukopys_htr.upload import _split_top_level_paths, clear_hub_repo, upload_folder_to_hub
 
 
@@ -100,3 +101,22 @@ def test_upload_dataset_uses_large_folder_uploader(tmp_path: Path) -> None:
     api.delete_repo.assert_not_called()
     api.upload_large_folder.assert_called_once()
     api.upload_folder.assert_not_called()
+
+
+def test_model_card_describes_a100_v2_adapter(tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "adapter_config.json").write_text(
+        '{"base_model_name_or_path": "Qwen/Qwen3-VL-8B-Instruct", "r": 32, "lora_alpha": 64}',
+        encoding="utf-8",
+    )
+
+    readme = write_model_card(
+        model_dir,
+        repo_id="AlexandreSheva/rukopys-qwen3-vl-8b-page-a100-v2",
+    )
+
+    card = readme.read_text(encoding="utf-8")
+    assert "RUKOPYS Qwen3-VL 8B Page LoRA (A100 v2)" in card
+    assert "preferred release over the original page adapter" in card
+    assert "page-level Ukrainian handwriting" in card

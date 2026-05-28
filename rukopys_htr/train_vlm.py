@@ -8,6 +8,7 @@ from typing import Any
 
 from PIL import Image
 
+from .cards import write_model_card
 from .jsonl import read_jsonl
 from .prompts import transcribe_region_prompt
 from .vlm_loading import (
@@ -349,6 +350,13 @@ def train_vlm_qlora(config: QLoRAConfig) -> Path:
     trainer.train()
     trainer.save_model(str(config.output_dir))
     processor.save_pretrained(str(config.output_dir))
+    write_model_card(
+        config.output_dir,
+        repo_id=config.hub_model_id,
+        qlora_config=config,
+        train_examples=len(train_dataset),
+        eval_examples=len(eval_dataset) if eval_dataset is not None else 0,
+    )
     if config.push_to_hub:
         trainer.push_to_hub()
     return config.output_dir

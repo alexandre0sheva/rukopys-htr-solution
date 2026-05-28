@@ -178,31 +178,44 @@ tags:
 - document-analysis
 ---
 
-# RUKOPYS Curated MVP
+# RUKOPYS Curated MVP: Ukrainian Handwriting Recognition Dataset
 
-Curated derivative of [`{SOURCE_DATASET}`](https://huggingface.co/datasets/{SOURCE_DATASET})
-for Ukrainian handwriting recognition training.
+RUKOPYS Curated MVP is a cleaned, task-ready derivative of
+[`{SOURCE_DATASET}`](https://huggingface.co/datasets/{SOURCE_DATASET}) for Ukrainian handwritten
+document AI. It turns the raw RUKOPYS release into reproducible artifacts for page-level
+vision-language fine-tuning, crop-level transcription, and layout detection.
 
-## Contents
+This dataset is designed for practical HTR work: train a model, inspect the normalized records,
+evaluate layout/text extraction, and export Kaggle-style predictions from the same data contract.
 
-- `metadata.jsonl`: normalized page records.
-- `regions.jsonl`: one row per region.
-- `vlm_sft.jsonl`: crop-level transcription examples.
-- `page_sft.jsonl`: full-page image to structured JSON examples.
-- `yolo/`: YOLO-format layout detection dataset.
-- `crops/`: region crops for transcription fine-tuning, if exported.
+## What This Dataset Enables
+
+- Full-page image-to-JSON training for models that return text regions with bounding boxes.
+- Crop-level handwritten text transcription fine-tuning.
+- YOLO-format layout detection experiments.
+- Consistent metadata for evaluation, debugging, and model-card traceability.
+- Reproducible packaging for Hugging Face Hub uploads and local downloads.
+
+## Dataset Contents
+
+- `metadata.jsonl`: normalized page records with image metadata and region annotations.
+- `regions.jsonl`: one row per annotated region for analysis and filtering.
+- `vlm_sft.jsonl`: crop-level supervised examples for handwritten text transcription.
+- `page_sft.jsonl`: full-page image-to-structured-JSON supervised examples.
+- `yolo/`: YOLO-format layout detection dataset and split metadata.
+- `crops/`: region crops for transcription fine-tuning, when crop export is enabled.
 - `_pack_manifest.json`: tar-shard manifest when the dataset is uploaded in packed form.
 
-Use `rukopys download-curated` to download and automatically unpack tar shards.
+Use `rukopys download-curated` to download the dataset and automatically unpack tar shards.
 
-## Stats
+## Dataset Size
 
 - Pages: {stats["pages"]}
 - Regions: {stats["regions"]}
-- Crop SFT examples: {stats["vlm_examples"]}
-- Page SFT examples: {stats["page_sft_examples"]}
+- Crop-level SFT examples: {stats["vlm_examples"]}
+- Page-level SFT examples: {stats["page_sft_examples"]}
 
-## Sources
+## Source Distribution
 
 {source_counts}
 
@@ -210,13 +223,36 @@ Use `rukopys download-curated` to download and automatically unpack tar shards.
 
 {type_counts}
 
-## Notes
+## Quality Signals
 
-Quality weights are assigned by annotation source:
+Each example receives a quality weight derived from annotation provenance. The weights are intended
+for filtering or weighted sampling during training:
 
 - `annotator`: 1.0
 - `volunteer`: 0.75
 - `auto`: 0.35
+
+These weights do not replace evaluation; they provide a simple way to reduce the impact of noisier
+silver or automatic annotations.
+
+## Recommended Uses
+
+- Fine-tune VLMs for Ukrainian handwritten page parsing.
+- Train layout detectors for handwritten and printed regions.
+- Benchmark OCR/HTR post-processing on structured document outputs.
+- Demonstrate an end-to-end document AI pipeline from raw data to model submission artifacts.
+
+## Limitations
+
+- This is a curated derivative, so it inherits the source dataset's annotation assumptions and gaps.
+- Automatic or volunteer-derived annotations can be noisy; use `quality_weight` when training.
+- The dataset is focused on Ukrainian handwriting and should not be treated as language-general OCR.
+- Page scans vary in quality, layout, and handwriting style, so validation on target documents is required.
+
+## License
+
+This dataset inherits the source dataset license: CC BY-NC-SA 4.0. Check the license terms before
+commercial or redistribution use.
 
 ## Source Dataset
 

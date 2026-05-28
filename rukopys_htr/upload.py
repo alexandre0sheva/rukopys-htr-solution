@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
+from .cards import write_model_card
 from .pack import ensure_packed_for_hub, validate_hub_layout
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,9 @@ def upload_folder_to_hub(
         raise FileNotFoundError(local_dir)
 
     upload_dir = local_dir.resolve()
+    if repo_type == "model":
+        write_model_card(upload_dir, repo_id=repo_id)
+
     if pack:
         pack_kwargs = {}
         if max_files_per_shard is not None:

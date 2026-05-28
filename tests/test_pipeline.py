@@ -75,6 +75,9 @@ def test_curate_dataset_exports_core_artifacts(tmp_path: Path) -> None:
     assert (curated / "page_sft.jsonl").exists()
     assert (curated / "yolo" / "data.yaml").exists()
     assert list((curated / "crops" / "train").glob("*.jpg"))
+    dataset_card = (curated / "README.md").read_text(encoding="utf-8")
+    assert "RUKOPYS Curated MVP: Ukrainian Handwriting Recognition Dataset" in dataset_card
+    assert "vision-language fine-tuning" in dataset_card
 
     page_rows = [
         json.loads(line)
