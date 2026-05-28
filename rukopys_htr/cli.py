@@ -87,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("download", help="Download RUKOPYS from Hugging Face")
     p.add_argument("--output", type=_path, required=True)
     p.add_argument("--repo-id")
+    p.add_argument("--max-workers", type=int, default=16)
+    p.add_argument(
+        "--allow-pattern",
+        action="append",
+        dest="allow_patterns",
+        help="Only download matching Hub paths. Can be passed more than once.",
+    )
 
     p = sub.add_parser(
         "download-curated",
@@ -95,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", type=_path, required=True)
     p.add_argument("--repo-id")
     p.add_argument("--no-unpack", action="store_true")
+    p.add_argument("--max-workers", type=int, default=16)
 
     p = sub.add_parser("curate", help="Curate raw RUKOPYS data into training artifacts")
     p.add_argument("--raw-dir", type=_path, required=True)
@@ -249,6 +257,8 @@ def main(argv: list[str] | None = None) -> int:
         path = download_dataset(
             output_dir=args.output,
             repo_id=args.repo_id or config.get("source_dataset", SOURCE_DATASET),
+            max_workers=args.max_workers,
+            allow_patterns=args.allow_patterns,
         )
         print(path)
         return 0
@@ -258,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output,
             repo_id=args.repo_id or config.get("curated_dataset", DEFAULT_CURATED_DATASET),
             unpack=not args.no_unpack,
+            max_workers=args.max_workers,
         )
         print(json.dumps({"path": str(path), **stats}, ensure_ascii=False, indent=2))
         return 0

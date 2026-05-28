@@ -16,6 +16,10 @@ REPO_URL = "https://github.com/alexandre0sheva/rukopys-htr-solution.git"
 !pip install -U pip
 !pip install -e ".[data,detector,vlm,kaggle]"
 
+# %%
+%env HF_XET_HIGH_PERFORMANCE=1
+%env HF_HUB_DISABLE_PROGRESS_BARS=1
+
 # %% [markdown]
 # If Colab upgraded CUDA or PyTorch packages, restart the runtime once, then continue from here.
 
@@ -28,12 +32,12 @@ from google.colab import drive
 drive.mount("/content/drive")
 
 WORK_ROOT = "/content/drive/MyDrive/rukopys-htr"
-RAW_DIR = f"{WORK_ROOT}/data/raw/rukopys"
+RAW_DIR = "/content/rukopys-htr/data/raw/rukopys"
 CURATED_DIR = f"{WORK_ROOT}/data/curated/rukopys_mvp"
 RUNS_DIR = f"{WORK_ROOT}/runs"
 OUTPUTS_DIR = f"{WORK_ROOT}/outputs"
 
-!mkdir -p {WORK_ROOT}/data {RUNS_DIR} {OUTPUTS_DIR}
+!mkdir -p /content/rukopys-htr/data {WORK_ROOT}/data {RUNS_DIR} {OUTPUTS_DIR}
 
 # %% [markdown]
 # ## Hugging Face login
@@ -70,7 +74,11 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 
 # %%
 # Still needed for sample_submission.csv and test inference, even when using Option A.
-!rukopys download --output {RAW_DIR}
+!rukopys download \
+  --output {RAW_DIR} \
+  --max-workers 32 \
+  --allow-pattern "test/**" \
+  --allow-pattern "sample_submission.csv"
 
 # %% [markdown]
 # ### Option B: Download raw and curate
@@ -78,7 +86,7 @@ HF_DATASET_ID = "AlexandreSheva/rukopys-curated-mvp"
 # Skip Option A if you run these cells instead.
 
 # %%
-!rukopys download --output {RAW_DIR}
+!rukopys download --output {RAW_DIR} --max-workers 32
 
 # %%
 !rukopys curate \

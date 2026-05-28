@@ -23,6 +23,13 @@ pip install -e ".[data,detector,vlm,kaggle]"
 
 If Colab upgrades core CUDA/PyTorch packages, restart the runtime once after installation.
 
+For faster Hub transfers on current Hugging Face Hub/Xet backends:
+
+```bash
+export HF_XET_HIGH_PERFORMANCE=1
+export HF_HUB_DISABLE_PROGRESS_BARS=1
+```
+
 ## 3. Persistent Storage
 
 ```python
@@ -62,10 +69,11 @@ Accept the Kaggle competition rules in the web UI before submitting.
 
 ```bash
 rukopys download \
-  --output /content/drive/MyDrive/rukopys-htr/data/raw/rukopys
+  --output /content/rukopys-htr/data/raw/rukopys \
+  --max-workers 32
 
 rukopys curate \
-  --raw-dir /content/drive/MyDrive/rukopys-htr/data/raw/rukopys \
+  --raw-dir /content/rukopys-htr/data/raw/rukopys \
   --output-dir /content/drive/MyDrive/rukopys-htr/data/curated/rukopys_mvp \
   --include-silver \
   --max-silver 1000 \
@@ -73,6 +81,17 @@ rukopys curate \
 ```
 
 For a fast smoke test, reduce `--max-silver` to `100` or omit `--include-silver`.
+
+If you use the pre-curated dataset and only need raw files for inference/submission, download just
+the hidden test split and sample submission:
+
+```bash
+rukopys download \
+  --output /content/rukopys-htr/data/raw/rukopys \
+  --max-workers 32 \
+  --allow-pattern "test/**" \
+  --allow-pattern "sample_submission.csv"
+```
 
 ## 6. Train QLoRA on T4
 
