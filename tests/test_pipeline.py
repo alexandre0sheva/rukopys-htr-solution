@@ -73,6 +73,7 @@ def test_curate_dataset_exports_core_artifacts(tmp_path: Path) -> None:
     assert (curated / "regions.jsonl").exists()
     assert (curated / "vlm_sft.jsonl").exists()
     assert (curated / "page_sft.jsonl").exists()
+    assert (curated / "page_text_sft.jsonl").exists()
     assert (curated / "yolo" / "data.yaml").exists()
     assert list((curated / "crops" / "train").glob("*.jpg"))
     dataset_card = (curated / "README.md").read_text(encoding="utf-8")
@@ -85,6 +86,12 @@ def test_curate_dataset_exports_core_artifacts(tmp_path: Path) -> None:
     ]
     assert page_rows[0]["task"] == "page_to_regions_json"
     assert page_rows[0]["answer"][0]["text"] == "Тест"
+    page_text_rows = [
+        json.loads(line)
+        for line in (curated / "page_text_sft.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert page_text_rows[0]["task"] == "page_to_text_lines_json"
+    assert page_text_rows[0]["answer"] == ["Тест"]
 
 
 def test_empty_inference_and_submission(tmp_path: Path) -> None:
@@ -163,6 +170,34 @@ def test_page_vlm_inference_batches_pages(tmp_path: Path) -> None:
     assert rows[1]["regions"][0]["text"] == "test-2.jpg"
 
 
+def test_page_text_inference_assigns_lines_to_detector_regions(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    _make_raw_dataset(raw)
+    predictions = tmp_path / "page_text_predictions.jsonl"
+
+    class FakeDetector:
+        def detect(self, image_path: Path) -> list[Region]:
+            return [
+                Region(bbox=[10, 20, 110, 50], type="handwritten", text=""),
+                Region(bbox=[10, 55, 110, 80], type="handwritten", text=""),
+            ]
+
+    class FakePageTextRecognizer:
+        def recognize_lines(self, image_path: Path, page: PageRecord) -> list[str]:
+            return ["Перший", "Другий"]
+
+    count = run_inference(
+        raw / "test",
+        predictions,
+        detector=FakeDetector(),  # type: ignore[arg-type]
+        page_text_recognizer=FakePageTextRecognizer(),
+    )
+
+    rows = [json.loads(line) for line in predictions.read_text(encoding="utf-8").splitlines()]
+    assert count == 1
+    assert [region["text"] for region in rows[0]["regions"]] == ["Перший", "Другий"]
+
+
 def test_proxy_evaluation(tmp_path: Path) -> None:
     raw = tmp_path / "raw"
     _make_raw_dataset(raw)
@@ -181,7 +216,10 @@ def test_proxy_evaluation(tmp_path: Path) -> None:
 
     metrics = evaluate_predictions(raw, predictions)
     assert metrics["f1"] == 1.0
+    assert metrics["class_acc"] == 1.0
     assert metrics["cer"] == 0.0
+    assert metrics["page_cer"] == 0.0
+    assert metrics["score"] == 1.0
 
 
 def test_quality_weight_filters_training_rows(tmp_path: Path) -> None:

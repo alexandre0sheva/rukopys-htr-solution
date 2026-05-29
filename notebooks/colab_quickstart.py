@@ -43,6 +43,9 @@ CURATED_DIR = f"{WORK_ROOT}/data/curated/rukopys_mvp"
 RUNS_DIR = f"{WORK_ROOT}/runs"
 OUTPUTS_DIR = f"{WORK_ROOT}/outputs"
 HF_NAMESPACE = "your-hf-username-or-org"
+HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
+HF_PAGE_TEXT_MODEL_ID = f"{HF_NAMESPACE}/rukopys-qwen3-vl-8b-page-text"
+HF_DETECTOR_MODEL_ID = f"{HF_NAMESPACE}/rukopys-yolo11m-detector"
 
 !mkdir -p /content/rukopys-htr/data {WORK_ROOT}/data {RUNS_DIR} {OUTPUTS_DIR}
 
@@ -71,6 +74,13 @@ HF_NAMESPACE = "your-hf-username-or-org"
   --max-silver 1000 \
   --crop-images
 
+# Upload the curated dataset so future Colab runs can skip curation.
+!rukopys upload-dataset \
+  --dataset-dir {CURATED_DIR} \
+  --repo-id {HF_DATASET_ID} \
+  --pack \
+  --replace-existing
+
 # %% [markdown]
 # ### Optional: reuse your own curated dataset
 #
@@ -78,8 +88,6 @@ HF_NAMESPACE = "your-hf-username-or-org"
 # to your own Hugging Face namespace.
 
 # %%
-HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
-
 !rukopys download-curated \
   --output {CURATED_DIR} \
   --repo-id {HF_DATASET_ID}
@@ -93,7 +101,7 @@ HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
   --allow-pattern "sample_submission.csv"
 
 # %% [markdown]
-# ## T4 smoke-test QLoRA
+# ## T4 smoke-test page-text QLoRA
 #
 # Restart the runtime before this cell if you loaded other models earlier.
 # The `colab_t4_fast` preset uses conservative memory settings
@@ -101,113 +109,96 @@ HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
 
 # %%
 !rukopys train-vlm-qlora \
-  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
+  --train-jsonl {CURATED_DIR}/page_text_sft.jsonl \
   --preset colab_t4_fast \
-  --output-dir {RUNS_DIR}/qwen3_vl_2b_page_t4 \
+  --output-dir {RUNS_DIR}/qwen3_vl_2b_page_text_t4 \
   --sample-limit 300 \
   --max-steps 100 \
   --batch-size 1
 
 # %% [markdown]
-# To preserve the adapter outside Colab, add `--push-to-hub` and a model ID in your namespace:
+# ## Train detector
+#
+# The detector predicts layout boxes and region types. The page-text VLM predicts text lines; the
+# inference pipeline assigns the generated text back to detector boxes in reading order.
 
 # %%
-HF_MODEL_ID = f"{HF_NAMESPACE}/rukopys-qwen3-vl-2b-page-t4"
-!rukopys train-vlm-qlora \
-  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
-  --preset colab_t4_fast \
-  --output-dir {RUNS_DIR}/qwen3_vl_2b_page_t4 \
-  --sample-limit 300 \
-  --max-steps 100 \
-  --batch-size 1 \
-  --push-to-hub \
-  --hub-model-id {HF_MODEL_ID}
+!rukopys train-detector \
+  --data-yaml {CURATED_DIR}/yolo/data.yaml \
+  --model yolo11m.pt \
+  --output-dir {RUNS_DIR}/detector_yolo11m \
+  --epochs 80 \
+  --image-size 1536 \
+  --batch 4
+
+!rukopys upload-model \
+  --model-dir {RUNS_DIR}/detector_yolo11m \
+  --repo-id {HF_DETECTOR_MODEL_ID}
 
 # %% [markdown]
-# ## T4 quality QLoRA
+# ## T4 quality page-text QLoRA
 #
 # This uses 4-bit QLoRA with a larger 4B model. Use this after the smoke test works.
 
 # %%
 !rukopys train-vlm-qlora \
-  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
+  --train-jsonl {CURATED_DIR}/page_text_sft.jsonl \
   --preset colab_t4_quality \
-  --output-dir {RUNS_DIR}/qwen3_vl_4b_page_t4 \
+  --output-dir {RUNS_DIR}/qwen3_vl_4b_page_text_t4 \
   --sample-limit 500 \
   --max-steps 200
 
 # %% [markdown]
-# ## L4/A100 practical QLoRA
+# ## A100 practical page-text QLoRA
 #
-# Use this cell instead of the T4 smoke-test when you have enough VRAM.
+# Use this cell for the main Kaggle experiment. It pushes the adapter to Hugging Face.
 
 # %%
 !rukopys train-vlm-qlora \
-  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
+  --train-jsonl {CURATED_DIR}/page_text_sft.jsonl \
   --preset a100_quality \
-  --output-dir {RUNS_DIR}/qwen3_vl_8b_page \
-  --max-steps 1200 \
+  --output-dir {RUNS_DIR}/qwen3_vl_8b_page_text \
+  --max-steps 1800 \
   --eval-steps 100 \
-  --min-quality-weight 0.75
+  --min-quality-weight 0.75 \
+  --push-to-hub \
+  --hub-model-id {HF_PAGE_TEXT_MODEL_ID}
 
 # %% [markdown]
-# ## A100 80GB high-quality QLoRA
-
-# %%
-!rukopys train-vlm-qlora \
-  --train-jsonl {CURATED_DIR}/page_sft.jsonl \
-  --preset a100_32b_quality \
-  --output-dir {RUNS_DIR}/qwen3_vl_32b_page \
-  --max-steps 1200 \
-  --eval-steps 100 \
-  --min-quality-weight 0.75
-
-# %% [markdown]
-# ## Upload curated dataset
+# ## A100/H100 80GB 32B experiment
 #
-# Run this after local curation, or whenever you want to publish an updated curated build. Stage to
-# Colab local SSD with `rsync --delete`, pack into tar shards, then upload. `upload-dataset --pack`
-# validates layout and repacks if staging is inconsistent.
+# Use this after the 8B run establishes a good validation/submission baseline. It is slower and
+# needs more VRAM, but may improve Ukrainian handwriting and formula robustness.
 
 # %%
-from pathlib import Path
+HF_PAGE_TEXT_32B_MODEL_ID = f"{HF_NAMESPACE}/rukopys-qwen3-vl-32b-page-text"
 
-HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
-STAGING_DIR = Path("/content/hf_upload_staging/rukopys_mvp")
-
-STAGING_DIR.parent.mkdir(parents=True, exist_ok=True)
-# Mirror curated data exactly; without --delete stale shards/manifest can block repacking.
-!rsync -a --delete --info=progress2 "{CURATED_DIR}/" "{STAGING_DIR}/"
-!rm -rf "{STAGING_DIR}/.cache"
-
-!du -sh "{STAGING_DIR}"
-!find "{STAGING_DIR}" -type f | wc -l
-!rukopys pack-curated --dataset-dir {STAGING_DIR}
-
-!rukopys upload-dataset \
-  --dataset-dir {STAGING_DIR} \
-  --repo-id {HF_DATASET_ID} \
-  --pack \
-  --replace-existing
-
-print(f"https://huggingface.co/datasets/{HF_DATASET_ID}")
+!rukopys train-vlm-qlora \
+  --train-jsonl {CURATED_DIR}/page_text_sft.jsonl \
+  --preset a100_32b_quality \
+  --output-dir {RUNS_DIR}/qwen3_vl_32b_page_text \
+  --max-steps 1800 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75 \
+  --push-to-hub \
+  --hub-model-id {HF_PAGE_TEXT_32B_MODEL_ID}
 
 # %% [markdown]
 # ## Inference and submission
 
 # %%
 !rukopys infer \
-  --mode page-vlm \
+  --mode detector-page-text \
   --test-dir {RAW_DIR}/test \
-  --vlm-model {RUNS_DIR}/qwen3_vl_2b_page_t4 \
-  --max-pixels 262144 \
-  --page-max-new-tokens 1536 \
-  --batch-size 4 \
-  --output-jsonl {OUTPUTS_DIR}/page_predictions.jsonl
+  --detector-model {RUNS_DIR}/detector_yolo11m/weights/best.pt \
+  --vlm-model {RUNS_DIR}/qwen3_vl_8b_page_text \
+  --max-pixels 1605632 \
+  --page-max-new-tokens 1024 \
+  --output-jsonl {OUTPUTS_DIR}/detector_page_text_predictions.jsonl
 
 # %%
 !rukopys make-submission \
-  --predictions {OUTPUTS_DIR}/page_predictions.jsonl \
+  --predictions {OUTPUTS_DIR}/detector_page_text_predictions.jsonl \
   --sample-submission {RAW_DIR}/sample_submission.csv \
   --output {OUTPUTS_DIR}/submission.csv
 

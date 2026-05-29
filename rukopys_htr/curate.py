@@ -20,7 +20,11 @@ from .constants import (
 from .geometry import clamp_bbox, yolo_bbox
 from .io import load_split
 from .jsonl import write_jsonl
-from .prompts import page_to_regions_json_prompt, transcribe_region_prompt
+from .prompts import (
+    page_to_regions_json_prompt,
+    page_to_text_lines_json_prompt,
+    transcribe_region_prompt,
+)
 from .schemas import PageRecord, Region
 
 logger = logging.getLogger(__name__)
@@ -144,6 +148,24 @@ def _crop_region(src_path: Path, bbox: list[int], dst_path: Path) -> bool:
     return True
 
 
+def _reading_order_key(region: Region) -> tuple[int, int]:
+    center_y = (region.bbox[1] + region.bbox[3]) // 2
+    return (center_y // READING_ORDER_ROW_BAND, region.bbox[0])
+
+
+def _page_text_lines(regions: list[Region]) -> list[str]:
+    lines: list[str] = []
+    for region in sorted(regions, key=_reading_order_key):
+        if region.type not in TRANSCRIBED_TYPES:
+            continue
+        if region.language != "uk" or region.legibility != "legible":
+            continue
+        text = (region.text or "").strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
 def _write_dataset_card(output_dir: Path, stats: dict[str, Any]) -> None:
     card_dir = output_dir / "dataset_card"
     card_dir.mkdir(parents=True, exist_ok=True)
@@ -202,6 +224,7 @@ evaluate layout/text extraction, and export Kaggle-style predictions from the sa
 - `regions.jsonl`: one row per annotated region for analysis and filtering.
 - `vlm_sft.jsonl`: crop-level supervised examples for handwritten text transcription.
 - `page_sft.jsonl`: full-page image-to-structured-JSON supervised examples.
+- `page_text_sft.jsonl`: compact full-page image-to-reading-order text-line examples.
 - `yolo/`: YOLO-format layout detection dataset and split metadata.
 - `crops/`: region crops for transcription fine-tuning, when crop export is enabled.
 - `_pack_manifest.json`: tar-shard manifest when the dataset is uploaded in packed form.
@@ -214,6 +237,7 @@ Use `rukopys download-curated` to download the dataset and automatically unpack 
 - Regions: {stats["regions"]}
 - Crop-level SFT examples: {stats["vlm_examples"]}
 - Page-level SFT examples: {stats["page_sft_examples"]}
+- Page-text SFT examples: {stats["page_text_sft_examples"]}
 
 ## Source Distribution
 
@@ -283,6 +307,7 @@ def curate_dataset(
     region_rows: list[dict[str, Any]] = []
     vlm_rows: list[dict[str, Any]] = []
     page_sft_rows: list[dict[str, Any]] = []
+    page_text_sft_rows: list[dict[str, Any]] = []
     source_counts: Counter[str] = Counter()
     type_counts: Counter[str] = Counter()
 
@@ -359,19 +384,31 @@ def curate_dataset(
                         region.to_submission_dict()
                         for region in sorted(
                             page.regions,
-                            key=lambda item: (
-                                item.bbox[1] // READING_ORDER_ROW_BAND,
-                                item.bbox[0],
-                            ),
+                            key=_reading_order_key,
                         )
                     ],
                 }
             )
+            text_lines = _page_text_lines(page.regions)
+            if text_lines:
+                page_text_sft_rows.append(
+                    {
+                        "id": f"{page.split}:{Path(page.image_name).stem}:page_text",
+                        "image": f"images/{page.split}/{page.image_name}",
+                        "task": "page_to_text_lines_json",
+                        "source": page.source,
+                        "annotation_source": page.annotation_source,
+                        "quality_weight": quality_weight,
+                        "prompt": page_to_text_lines_json_prompt(source=page.source),
+                        "answer": text_lines,
+                    }
+                )
 
     write_jsonl(output_dir / "metadata.jsonl", normalized_pages)
     write_jsonl(output_dir / "regions.jsonl", region_rows)
     write_jsonl(output_dir / "vlm_sft.jsonl", vlm_rows)
     write_jsonl(output_dir / "page_sft.jsonl", page_sft_rows)
+    write_jsonl(output_dir / "page_text_sft.jsonl", page_text_sft_rows)
     _write_yolo_artifacts(
         [page for page in pages if page.split != "test"],
         output_dir=output_dir,
@@ -384,6 +421,7 @@ def curate_dataset(
         "regions": len(region_rows),
         "vlm_examples": len(vlm_rows),
         "page_sft_examples": len(page_sft_rows),
+        "page_text_sft_examples": len(page_text_sft_rows),
         "sources": dict(source_counts),
         "region_types": dict(type_counts),
     }

@@ -19,8 +19,12 @@ from .ensemble import merge_page_and_detector_regions
 from .geometry import clamp_bbox
 from .io import load_split
 from .jsonl import read_jsonl, write_jsonl
-from .postprocess import regions_from_model_json
-from .prompts import page_to_regions_json_prompt, transcribe_region_prompt
+from .postprocess import regions_from_model_json, text_lines_from_model_output
+from .prompts import (
+    page_to_regions_json_prompt,
+    page_to_text_lines_json_prompt,
+    transcribe_region_prompt,
+)
 from .schemas import PageRecord, Region
 from .vlm_loading import (
     load_vision_model_and_processor,
@@ -43,6 +47,10 @@ class Transcriber(Protocol):
         region: Region,
         page: PageRecord | None = None,
     ) -> str: ...
+
+
+class PageTextRecognizer(Protocol):
+    def recognize_lines(self, image_path: Path, page: PageRecord) -> list[str]: ...
 
 
 class EmptyDetector:
@@ -302,11 +310,108 @@ class VisionPageJsonDetector:
         ]
 
 
+class VisionPageTextRecognizer:
+    def __init__(
+        self,
+        model_path: Path,
+        prompt: str | None = None,
+        max_new_tokens: int = DEFAULT_PAGE_MAX_NEW_TOKENS,
+        load_in_4bit: bool = True,
+        max_pixels: int | None = None,
+    ):
+        self.torch, self.processor, self.model = load_vision_model_and_processor(
+            model_path,
+            load_in_4bit=load_in_4bit,
+            max_pixels=max_pixels,
+        )
+        self.max_pixels, self.min_pixels = resolve_pixel_budget(self.processor, max_pixels)
+        self.default_prompt = prompt
+        self.max_new_tokens = max_new_tokens
+
+    def recognize_lines(self, image_path: Path, page: PageRecord) -> list[str]:
+        prompt = self.default_prompt or page_to_text_lines_json_prompt(source=page.source)
+        with Image.open(image_path) as image:
+            page_image = image.convert("RGB")
+        decoded = run_vlm_generation(
+            self.torch,
+            self.processor,
+            self.model,
+            page_image,
+            prompt,
+            max_new_tokens=self.max_new_tokens,
+            max_pixels=self.max_pixels,
+            min_pixels=self.min_pixels,
+        )
+        lines = text_lines_from_model_output(decoded)
+        if not lines:
+            logger.warning("Page-text VLM returned no text lines for %s", image_path)
+        return lines
+
+
 def sort_regions_reading_order(regions: list[Region]) -> list[Region]:
     return sorted(
         regions,
-        key=lambda region: (region.bbox[1] // READING_ORDER_ROW_BAND, region.bbox[0]),
+        key=lambda region: (
+            ((region.bbox[1] + region.bbox[3]) // 2) // READING_ORDER_ROW_BAND,
+            region.bbox[0],
+        ),
     )
+
+
+def _regions_from_page_text_lines(lines: list[str], page: PageRecord) -> list[Region]:
+    if not lines:
+        return []
+    band_height = max(1, page.image_height // max(1, len(lines)))
+    regions: list[Region] = []
+    for index, line in enumerate(lines):
+        y1 = min(page.image_height - 1, index * band_height)
+        y2 = (
+            page.image_height
+            if index == len(lines) - 1
+            else min(page.image_height, y1 + band_height)
+        )
+        regions.append(
+            Region(
+                bbox=[0, y1, page.image_width, max(y2, y1 + 1)],
+                type="handwritten",
+                text=line,
+            )
+        )
+    return regions
+
+
+def _assign_page_text_to_detector_regions(
+    detected_regions: list[Region],
+    text_lines: list[str],
+    page: PageRecord,
+) -> list[Region]:
+    ordered = sort_regions_reading_order(
+        [region for region in detected_regions if region.type in TRANSCRIBED_TYPES]
+    )
+    structural = [region for region in detected_regions if region.type in EMPTY_TEXT_TYPES]
+    assigned: list[Region] = []
+    for region, line in zip(ordered, text_lines, strict=False):
+        assigned.append(
+            Region(
+                bbox=region.bbox,
+                type=region.type,
+                text=line,
+                language=region.language,
+                legibility=region.legibility,
+                confidence=region.confidence,
+            )
+        )
+
+    if len(ordered) > len(text_lines):
+        for region in ordered[len(text_lines) :]:
+            assigned.append(region)
+    elif len(text_lines) > len(ordered):
+        assigned.extend(_regions_from_page_text_lines(text_lines[len(ordered) :], page))
+
+    for region in structural:
+        region.text = ""
+    assigned.extend(structural)
+    return sort_regions_reading_order(assigned)
 
 
 def _finalize_regions(
@@ -335,6 +440,7 @@ def run_inference(
     detector: Detector | None = None,
     transcriber: Transcriber | None = None,
     page_detector: VisionPageJsonDetector | None = None,
+    page_text_recognizer: PageTextRecognizer | None = None,
     *,
     ensemble: bool = False,
     ensemble_iou_threshold: float = 0.5,
@@ -388,7 +494,14 @@ def run_inference(
 
     for page in tqdm(pages, desc="Inference"):
         image_path = Path(page.image_path or test_dir / page.file_name)
-        if ensemble and page_detector is not None:
+        if page_text_recognizer is not None and page_detector is None:
+            text_lines = page_text_recognizer.recognize_lines(image_path, page)
+            detected_regions = (
+                _assign_page_text_to_detector_regions(detector.detect(image_path), text_lines, page)
+                if not isinstance(detector, EmptyDetector)
+                else _regions_from_page_text_lines(text_lines, page)
+            )
+        elif ensemble and page_detector is not None:
             page_regions = page_detector.detect_for_page(
                 image_path,
                 page.image_width,

@@ -143,3 +143,22 @@ def regions_from_model_json(text: str, image_width: int, image_height: int) -> l
             )
         )
     return regions
+
+
+def text_lines_from_model_output(text: str) -> list[str]:
+    parsed = extract_json_array_with_status(text)
+    if parsed.items:
+        lines: list[str] = []
+        for item in parsed.items:
+            if isinstance(item, str):
+                line = item.strip()
+            elif isinstance(item, dict):
+                line = str(item.get("text") or "").strip()
+            else:
+                line = str(item).strip()
+            if line:
+                lines.append(line)
+        return lines
+
+    cleaned = _strip_markdown_fence(text)
+    return [line.strip() for line in cleaned.splitlines() if line.strip()]

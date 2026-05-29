@@ -83,6 +83,12 @@ rukopys curate \
   --include-silver \
   --max-silver 1000 \
   --crop-images
+
+rukopys upload-dataset \
+  --dataset-dir "${CURATED_DIR}" \
+  --repo-id "${HF_NAMESPACE}/rukopys-curated-mvp" \
+  --pack \
+  --replace-existing
 ```
 
 For a fast smoke test, reduce `--max-silver` to `100` or omit `--include-silver`.
@@ -107,9 +113,9 @@ The second command is still needed for `sample_submission.csv` and the hidden te
 
 ```bash
 rukopys train-vlm-qlora \
-  --train-jsonl "${CURATED_DIR}/page_sft.jsonl" \
+  --train-jsonl "${CURATED_DIR}/page_text_sft.jsonl" \
   --preset colab_t4_fast \
-  --output-dir "${RUNS_DIR}/qwen3_vl_2b_page_t4" \
+  --output-dir "${RUNS_DIR}/qwen3_vl_2b_page_text_t4" \
   --sample-limit 300 \
   --max-steps 100 \
   --batch-size 1
@@ -118,16 +124,16 @@ rukopys train-vlm-qlora \
 To push the adapter to your Hub namespace, add:
 
 ```bash
---push-to-hub --hub-model-id "${HF_NAMESPACE}/rukopys-qwen3-vl-2b-page-t4"
+--push-to-hub --hub-model-id "${HF_NAMESPACE}/rukopys-qwen3-vl-2b-page-text-t4"
 ```
 
 For a stronger T4 run, switch to the 4-bit 4B preset:
 
 ```bash
 rukopys train-vlm-qlora \
-  --train-jsonl "${CURATED_DIR}/page_sft.jsonl" \
+  --train-jsonl "${CURATED_DIR}/page_text_sft.jsonl" \
   --preset colab_t4_quality \
-  --output-dir "${RUNS_DIR}/qwen3_vl_4b_page_t4" \
+  --output-dir "${RUNS_DIR}/qwen3_vl_4b_page_text_t4" \
   --sample-limit 500 \
   --max-steps 200
 ```
@@ -136,54 +142,60 @@ rukopys train-vlm-qlora \
 
 ```bash
 rukopys train-vlm-qlora \
-  --train-jsonl "${CURATED_DIR}/page_sft.jsonl" \
+  --train-jsonl "${CURATED_DIR}/page_text_sft.jsonl" \
   --preset a100_quality \
-  --output-dir "${RUNS_DIR}/qwen3_vl_8b_page" \
-  --max-steps 1200 \
+  --output-dir "${RUNS_DIR}/qwen3_vl_8b_page_text" \
+  --max-steps 1800 \
   --eval-steps 100 \
-  --min-quality-weight 0.75
+  --min-quality-weight 0.75 \
+  --push-to-hub \
+  --hub-model-id "${HF_NAMESPACE}/rukopys-qwen3-vl-8b-page-text"
 ```
 
 For an A100 80GB 32B run:
 
 ```bash
 rukopys train-vlm-qlora \
-  --train-jsonl "${CURATED_DIR}/page_sft.jsonl" \
+  --train-jsonl "${CURATED_DIR}/page_text_sft.jsonl" \
   --preset a100_32b_quality \
-  --output-dir "${RUNS_DIR}/qwen3_vl_32b_page" \
-  --max-steps 1200 \
+  --output-dir "${RUNS_DIR}/qwen3_vl_32b_page_text" \
+  --max-steps 1800 \
   --eval-steps 100 \
-  --min-quality-weight 0.75
+  --min-quality-weight 0.75 \
+  --push-to-hub \
+  --hub-model-id "${HF_NAMESPACE}/rukopys-qwen3-vl-32b-page-text"
 ```
-
-Add `--push-to-hub --hub-model-id "${HF_NAMESPACE}/MODEL_REPO_NAME"` to either command when you
-want to preserve the adapter outside Colab.
 
 ## 8. Optional Detector
 
 ```bash
 rukopys train-detector \
   --data-yaml "${CURATED_DIR}/yolo/data.yaml" \
-  --model yolo11n.pt \
+  --model yolo11m.pt \
   --output-dir "${RUNS_DIR}/detector" \
-  --epochs 30 \
-  --image-size 1280 \
+  --epochs 80 \
+  --image-size 1536 \
   --batch 4
+
+rukopys upload-model \
+  --model-dir "${RUNS_DIR}/detector" \
+  --repo-id "${HF_NAMESPACE}/rukopys-yolo11m-detector"
 ```
 
 ## 9. Inference and Submission CSV
 
 ```bash
 rukopys infer \
-  --mode page-vlm \
+  --mode detector-page-text \
   --test-dir "${RAW_DIR}/test" \
-  --vlm-model "${RUNS_DIR}/qwen3_vl_8b_page" \
-  --max-pixels 401408 \
-  --batch-size 4 \
-  --output-jsonl "${OUTPUTS_DIR}/page_predictions.jsonl"
+  --detector-model "${RUNS_DIR}/detector/weights/best.pt" \
+  --vlm-model "${RUNS_DIR}/qwen3_vl_8b_page_text" \
+  --max-pixels 1605632 \
+  --page-max-new-tokens 1024 \
+  --output-jsonl "${OUTPUTS_DIR}/detector_page_text_predictions.jsonl"
 
 rukopys make-submission \
-  --predictions "${OUTPUTS_DIR}/page_predictions.jsonl" \
+  --predictions "${OUTPUTS_DIR}/detector_page_text_predictions.jsonl" \
   --sample-submission "${RAW_DIR}/sample_submission.csv" \
   --output "${OUTPUTS_DIR}/submission.csv"
 ```
@@ -196,7 +208,8 @@ Inference loads VLMs in 4-bit on CUDA by default. Add `--no-load-in-4bit` only f
 - Then lower `--max-length` (try `768`) and `--max-pixels` (try `131072`), or move from the 4B T4 preset to the 2B smoke-test preset.
 - For page-level QLoRA, always pass `--max-pixels`. Full-page scans can otherwise produce tens of thousands of vision tokens and break image-token alignment.
 - During inference, always pass `--max-pixels` on T4/L4. Without it, full-page images can request tens of GB of VRAM.
-- On A100 80GB, use `--batch-size 4` for page-VLM inference first, then try `6` or `8` if VRAM allows.
+- The `detector-page-text` path does not batch page generation yet; it is slower but avoids long
+  malformed page-region JSON.
 - `--sample-limit` only reduces dataset size, not per-step VRAM.
 - Keep `--batch-size 1` for training and scale effective batch with `--grad-accum-steps`.
-- Start with `page_sft.jsonl`; use `vlm_sft.jsonl` only for detector+crop recognizer experiments.
+- Start with `page_text_sft.jsonl`; use `page_sft.jsonl` only for structured JSON experiments.

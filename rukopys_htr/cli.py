@@ -25,6 +25,7 @@ from .infer import (
     EmptyDetector,
     EmptyTranscriber,
     VisionPageJsonDetector,
+    VisionPageTextRecognizer,
     VisionTextGenerationTranscriber,
     YoloDetector,
     run_inference,
@@ -209,7 +210,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vlm-model", type=_path)
     p.add_argument(
         "--mode",
-        choices=["empty", "detector-vlm", "page-vlm", "ensemble"],
+        choices=[
+            "empty",
+            "detector-vlm",
+            "page-vlm",
+            "page-text-vlm",
+            "detector-page-text",
+            "ensemble",
+        ],
     )
     p.add_argument("--detector-confidence", type=float)
     p.add_argument("--detector-iou", type=float)
@@ -462,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         transcriber = EmptyTranscriber()
         page_detector = None
+        page_text_recognizer = None
         load_in_4bit = not args.no_load_in_4bit
         region_max_new_tokens = (
             args.region_max_new_tokens
@@ -500,6 +509,17 @@ def main(argv: list[str] | None = None) -> int:
                 load_in_4bit=load_in_4bit,
                 max_pixels=max_pixels,
             )
+        if mode in {"page-text-vlm", "detector-page-text"}:
+            if not args.vlm_model:
+                raise ValueError(f"--mode {mode} requires --vlm-model")
+            page_text_recognizer = VisionPageTextRecognizer(
+                args.vlm_model,
+                max_new_tokens=page_max_new_tokens,
+                load_in_4bit=load_in_4bit,
+                max_pixels=max_pixels,
+            )
+        if mode == "detector-page-text" and not args.detector_model:
+            raise ValueError("--mode detector-page-text requires --detector-model")
         if mode == "ensemble" and not args.detector_model:
             raise ValueError("--mode ensemble requires --detector-model")
 
@@ -509,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
             detector=detector,
             transcriber=transcriber,
             page_detector=page_detector,
+            page_text_recognizer=page_text_recognizer,
             ensemble=mode == "ensemble",
             ensemble_iou_threshold=args.ensemble_iou_threshold,
             batch_size=batch_size,

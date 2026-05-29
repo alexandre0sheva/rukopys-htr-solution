@@ -130,6 +130,7 @@ data/curated/rukopys_mvp/
   regions.jsonl
   vlm_sft.jsonl
   page_sft.jsonl
+  page_text_sft.jsonl
   images/{train,silver,test}/
   crops/{train,silver}/
   yolo/data.yaml
@@ -137,8 +138,9 @@ data/curated/rukopys_mvp/
   yolo/labels/{train,val}/
 ```
 
-Use `page_sft.jsonl` for full-page `image -> regions JSON` training. Use `vlm_sft.jsonl` for
-crop-level transcription experiments.
+Use `page_text_sft.jsonl` for compact full-page `image -> reading-order text lines` training,
+which directly targets PageCER without generating huge bbox JSON. Use `page_sft.jsonl` for
+full-page `image -> regions JSON` experiments, and `vlm_sft.jsonl` for crop-level transcription.
 
 ### 3. Train Detector
 
@@ -169,13 +171,25 @@ rukopys train-vlm-qlora \
   --min-quality-weight 0.75
 ```
 
+Page-text baseline for the strongest next experiment:
+
+```bash
+rukopys train-vlm-qlora \
+  --train-jsonl data/curated/rukopys_mvp/page_text_sft.jsonl \
+  --preset a100_quality \
+  --output-dir runs/qwen3_vl_8b_page_text_qlora \
+  --max-steps 1800 \
+  --eval-steps 100 \
+  --min-quality-weight 0.75
+```
+
 Colab T4 smoke test:
 
 ```bash
 rukopys train-vlm-qlora \
-  --train-jsonl data/curated/rukopys_mvp/page_sft.jsonl \
+  --train-jsonl data/curated/rukopys_mvp/page_text_sft.jsonl \
   --preset colab_t4_fast \
-  --output-dir runs/qwen3_vl_2b_page_t4_smoke \
+  --output-dir runs/qwen3_vl_2b_page_text_t4_smoke \
   --sample-limit 200 \
   --max-steps 50 \
   --batch-size 1
@@ -206,6 +220,19 @@ rukopys infer \
   --max-pixels 401408 \
   --batch-size 4 \
   --output-jsonl outputs/page_predictions.jsonl
+```
+
+Detector plus page-text VLM, recommended after training a detector:
+
+```bash
+rukopys infer \
+  --mode detector-page-text \
+  --test-dir data/raw/rukopys/test \
+  --detector-model runs/detector_mvp/weights/best.pt \
+  --vlm-model runs/qwen3_vl_8b_page_text_qlora \
+  --max-pixels 1605632 \
+  --page-max-new-tokens 1024 \
+  --output-jsonl outputs/detector_page_text_predictions.jsonl
 ```
 
 Detector plus crop VLM:
