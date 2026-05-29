@@ -4,6 +4,8 @@ import logging
 import random
 import shutil
 from collections import Counter
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,8 @@ from .schemas import PageRecord, Region
 
 logger = logging.getLogger(__name__)
 
+IoTask = tuple[Callable[..., bool], tuple[Any, ...]]
+
 
 def _quality_weight(annotation_source: str | None) -> float:
     return QUALITY_WEIGHTS.get(annotation_source or "", 0.5)
@@ -42,6 +46,20 @@ def _copy_image(src: Path, dst: Path) -> bool:
     if src.resolve() != dst.resolve():
         shutil.copy2(src, dst)
     return True
+
+
+def _run_io_tasks(tasks: list[IoTask], num_workers: int, desc: str) -> None:
+    if not tasks:
+        return
+    if num_workers <= 1:
+        for func, args in tqdm(tasks, desc=desc, leave=False):
+            func(*args)
+        return
+
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(func, *args) for func, args in tasks]
+        for future in tqdm(as_completed(futures), total=len(futures), desc=desc, leave=False):
+            future.result()
 
 
 def _clean_region(region: Region, page: PageRecord) -> Region | None:
@@ -94,19 +112,23 @@ def _write_yolo_artifacts(
     output_dir: Path,
     val_fraction: float,
     seed: int,
+    num_workers: int = 1,
 ) -> None:
     yolo_dir = output_dir / "yolo"
     assignments = _assign_yolo_split(pages, val_fraction=val_fraction, seed=seed)
     type_to_id = {name: idx for idx, name in enumerate(REGION_TYPES)}
 
+    copy_tasks: list[IoTask] = []
     for page in tqdm(pages, desc="YOLO labels", leave=False):
         yolo_split = assignments.get(page.file_name)
         if yolo_split is None or not page.image_path:
             continue
         src = Path(page.image_path)
-        image_dst = yolo_dir / "images" / yolo_split / page.image_name
-        if not _copy_image(src, image_dst):
+        if not src.exists():
+            logger.warning("Missing image for YOLO export: %s", src)
             continue
+        image_dst = yolo_dir / "images" / yolo_split / page.image_name
+        copy_tasks.append((_copy_image, (src, image_dst)))
 
         label_path = yolo_dir / "labels" / yolo_split / f"{Path(page.image_name).stem}.txt"
         label_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,6 +139,8 @@ def _write_yolo_artifacts(
             cx, cy, bw, bh = yolo_bbox(region.bbox, page.image_width, page.image_height)
             lines.append(f"{type_to_id[region.type]} {cx:.8f} {cy:.8f} {bw:.8f} {bh:.8f}")
         label_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    _run_io_tasks(copy_tasks, num_workers=num_workers, desc="YOLO images")
 
     data_yaml = yolo_dir / "data.yaml"
     names_block = "\n".join(f"  {idx}: {name}" for idx, name in enumerate(REGION_TYPES))
@@ -299,6 +323,7 @@ def curate_dataset(
     page_sft: bool = True,
     val_fraction: float = 0.15,
     seed: int = 42,
+    num_workers: int = 1,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     pages = _load_pages(raw_dir, include_silver=include_silver, max_silver=max_silver)
@@ -310,8 +335,10 @@ def curate_dataset(
     page_text_sft_rows: list[dict[str, Any]] = []
     source_counts: Counter[str] = Counter()
     type_counts: Counter[str] = Counter()
+    image_io_tasks: list[IoTask] = []
 
     for page in tqdm(pages, desc="Curating pages"):
+        source_image_path = Path(page.image_path) if page.image_path else None
         cleaned_regions = []
         for region in page.regions:
             cleaned = _clean_region(region, page)
@@ -321,9 +348,9 @@ def curate_dataset(
         source_counts[page.source or "unknown"] += 1
         type_counts.update(region.type for region in cleaned_regions)
 
-        if page.image_path:
+        if source_image_path:
             image_dst = output_dir / "images" / page.split / page.image_name
-            _copy_image(Path(page.image_path), image_dst)
+            image_io_tasks.append((_copy_image, (source_image_path, image_dst)))
             page.image_path = str(image_dst)
 
         quality_weight = _quality_weight(page.annotation_source)
@@ -332,9 +359,11 @@ def curate_dataset(
         for idx, region in enumerate(page.regions):
             region_id = f"{page.split}:{Path(page.image_name).stem}:{idx:04d}"
             crop_rel = None
-            if crop_images and page.image_path and region.type in TRANSCRIBED_TYPES:
+            if crop_images and source_image_path and region.type in TRANSCRIBED_TYPES:
                 crop_rel = f"crops/{page.split}/{Path(page.image_name).stem}_{idx:04d}.jpg"
-                _crop_region(Path(page.image_path), region.bbox, output_dir / crop_rel)
+                image_io_tasks.append(
+                    (_crop_region, (source_image_path, region.bbox, output_dir / crop_rel))
+                )
 
             row = {
                 "region_id": region_id,
@@ -409,11 +438,13 @@ def curate_dataset(
     write_jsonl(output_dir / "vlm_sft.jsonl", vlm_rows)
     write_jsonl(output_dir / "page_sft.jsonl", page_sft_rows)
     write_jsonl(output_dir / "page_text_sft.jsonl", page_text_sft_rows)
+    _run_io_tasks(image_io_tasks, num_workers=num_workers, desc="Images and crops")
     _write_yolo_artifacts(
         [page for page in pages if page.split != "test"],
         output_dir=output_dir,
         val_fraction=val_fraction,
         seed=seed,
+        num_workers=num_workers,
     )
 
     stats = {

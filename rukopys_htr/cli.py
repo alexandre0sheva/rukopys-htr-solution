@@ -164,6 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-page-sft", action="store_true")
     p.add_argument("--val-fraction", type=float)
     p.add_argument("--seed", type=int)
+    p.add_argument(
+        "--num-workers",
+        type=int,
+        help="Parallel image copy/crop workers for curation. Does not change labels or filtering.",
+    )
 
     p = sub.add_parser("pack-curated", help="Pack curated image directories into tar shards")
     p.add_argument("--dataset-dir", type=_path, required=True)
@@ -347,6 +352,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.val_fraction is not None
             else curation.get("val_fraction", 0.15),
             seed=args.seed if args.seed is not None else curation.get("seed", 42),
+            num_workers=args.num_workers
+            if args.num_workers is not None
+            else curation.get("num_workers", 1),
         )
         print(json.dumps(stats, ensure_ascii=False, indent=2))
         return 0

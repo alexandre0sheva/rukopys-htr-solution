@@ -72,7 +72,8 @@ HF_DETECTOR_MODEL_ID = f"{HF_NAMESPACE}/rukopys-yolo11m-detector"
   --output-dir {CURATED_DIR} \
   --include-silver \
   --max-silver 1000 \
-  --crop-images
+  --crop-images \
+  --num-workers 8
 
 # Upload the curated dataset so future Colab runs can skip curation.
 !rukopys upload-dataset \

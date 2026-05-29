@@ -118,7 +118,8 @@ rukopys curate \
   --output-dir data/curated/rukopys_mvp \
   --include-silver \
   --max-silver 1000 \
-  --crop-images
+  --crop-images \
+  --num-workers 8
 ```
 
 Curated outputs:

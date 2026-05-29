@@ -82,7 +82,8 @@ rukopys curate \
   --output-dir "${CURATED_DIR}" \
   --include-silver \
   --max-silver 1000 \
-  --crop-images
+  --crop-images \
+  --num-workers 8
 
 rukopys upload-dataset \
   --dataset-dir "${CURATED_DIR}" \
