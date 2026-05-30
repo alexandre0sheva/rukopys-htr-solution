@@ -1,6 +1,7 @@
 SOURCE_DATASET = "UkrainianCatholicUniversity/rukopys"
 DEFAULT_HF_NAMESPACE = "your-hf-username-or-org"
 DEFAULT_CURATED_DATASET = f"{DEFAULT_HF_NAMESPACE}/rukopys-curated-mvp"
+DEFAULT_DETECTOR_REPO = f"{DEFAULT_HF_NAMESPACE}/rukopys-yolo11m-detector"
 DEFAULT_DETECTOR_MODEL = "yolo11n.pt"
 DEFAULT_VLM_BASE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 

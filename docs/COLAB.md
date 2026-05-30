@@ -56,6 +56,7 @@ export RAW_DIR="/content/rukopys-htr/data/raw/rukopys"
 export CURATED_DIR="${WORK_ROOT}/data/curated/rukopys_mvp"
 export RUNS_DIR="${WORK_ROOT}/runs"
 export OUTPUTS_DIR="${WORK_ROOT}/outputs"
+export DETECTOR_DIR="${RUNS_DIR}/rukopys-yolo11m-detector"
 mkdir -p /content/rukopys-htr/data "${WORK_ROOT}/data" "${RUNS_DIR}" "${OUTPUTS_DIR}"
 ```
 
@@ -99,7 +100,9 @@ If you published a curated dataset in your own namespace, you can reuse it:
 ```bash
 rukopys download-curated \
   --output "${CURATED_DIR}" \
-  --repo-id "${HF_NAMESPACE}/rukopys-curated-mvp"
+  --repo-id "${HF_NAMESPACE}/rukopys-curated-mvp" \
+  --max-workers 32 \
+  --unpack-workers 16
 
 rukopys download \
   --output "${RAW_DIR}" \
@@ -167,19 +170,29 @@ rukopys train-vlm-qlora \
   --hub-model-id "${HF_NAMESPACE}/rukopys-qwen3-vl-32b-page-text"
 ```
 
-## 8. Optional Detector
+## 8. Detector
+
+Use the published detector for inference runs:
+
+```bash
+rukopys download-detector \
+  --repo-id "${HF_NAMESPACE}/rukopys-yolo11m-detector" \
+  --output "${DETECTOR_DIR}"
+```
+
+Train and upload a replacement only when you want to improve or change the detector:
 
 ```bash
 rukopys train-detector \
   --data-yaml "${CURATED_DIR}/yolo/data.yaml" \
   --model yolo11m.pt \
-  --output-dir "${RUNS_DIR}/detector" \
+  --output-dir "${DETECTOR_DIR}" \
   --epochs 80 \
   --image-size 1536 \
   --batch 4
 
 rukopys upload-model \
-  --model-dir "${RUNS_DIR}/detector" \
+  --model-dir "${DETECTOR_DIR}" \
   --repo-id "${HF_NAMESPACE}/rukopys-yolo11m-detector"
 ```
 
@@ -189,7 +202,7 @@ rukopys upload-model \
 rukopys infer \
   --mode detector-page-text \
   --test-dir "${RAW_DIR}/test" \
-  --detector-model "${RUNS_DIR}/detector/weights/best.pt" \
+  --detector-model "${DETECTOR_DIR}/weights/best.pt" \
   --vlm-model "${RUNS_DIR}/qwen3_vl_8b_page_text" \
   --max-pixels 1605632 \
   --page-max-new-tokens 1024 \

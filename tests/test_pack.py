@@ -36,7 +36,7 @@ def test_pack_and_unpack_roundtrip(tmp_path: Path) -> None:
     assert len(list((dataset_dir / "crops/train").glob("*.jpg"))) == 0
     assert len(list((dataset_dir / "crops/train").glob("shard-*.tar"))) == 3
 
-    unpack_stats = unpack_curated(dataset_dir)
+    unpack_stats = unpack_curated(dataset_dir, num_workers=2)
     assert unpack_stats["unpacked_dirs"] == 2
     assert unpack_stats["restored_files"] == 8
     assert not is_packed(dataset_dir)

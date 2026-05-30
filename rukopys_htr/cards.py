@@ -8,6 +8,7 @@ from .constants import DEFAULT_CURATED_DATASET
 
 DEFAULT_DATASET_ID = DEFAULT_CURATED_DATASET
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
+DEFAULT_YOLO_BASE_MODEL = "Ultralytics/YOLO11"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -25,6 +26,39 @@ def _format_value(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:g}"
     return str(value)
+
+
+def _read_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ""
+
+
+def _detect_yolo_variant(output_dir: Path, repo_id: str | None) -> str:
+    repo_text = (repo_id or "").lower()
+    args_text = _read_text(output_dir / "args.yaml").lower()
+    combined = f"{repo_text}\n{args_text}"
+    for variant in ("yolo11x", "yolo11l", "yolo11m", "yolo11s", "yolo11n"):
+        if variant in combined:
+            return variant
+    return "yolo11"
+
+
+def _looks_like_detector(output_dir: Path, repo_id: str | None) -> bool:
+    if (output_dir / "adapter_config.json").exists():
+        return False
+    repo_text = (repo_id or "").lower()
+    if "yolo" in repo_text or "detector" in repo_text:
+        return True
+    if (output_dir / "weights" / "best.pt").exists() or (output_dir / "weights" / "last.pt").exists():
+        return True
+    if any(output_dir.glob("*.pt")):
+        return True
+    args_text = _read_text(output_dir / "args.yaml").lower()
+    return "yolo" in args_text or "ultralytics" in args_text
 
 
 def _release_copy(repo_id: str | None) -> tuple[str, str, str]:
@@ -54,11 +88,18 @@ def write_model_card(
     eval_examples: int | None = None,
     overwrite: bool = True,
 ) -> Path:
-    """Write a Hub README for a RUKOPYS PEFT/LoRA adapter."""
+    """Write a Hub README for RUKOPYS model artifacts."""
     output_dir.mkdir(parents=True, exist_ok=True)
     readme_path = output_dir / "README.md"
     if readme_path.exists() and not overwrite:
         return readme_path
+
+    if _looks_like_detector(output_dir, repo_id):
+        return write_detector_model_card(
+            output_dir,
+            repo_id=repo_id,
+            overwrite=overwrite,
+        )
 
     adapter_config = _read_json(output_dir / "adapter_config.json")
     base_model = (
@@ -206,6 +247,125 @@ The expected assistant response is JSON compatible with the RUKOPYS page schema:
 This model is part of a practical HTR system: raw RUKOPYS data curation, dataset packaging,
 LoRA fine-tuning, inference, evaluation, and Kaggle-ready submission export. The goal is not only a
 checkpoint, but a reproducible document-AI workflow for Ukrainian handwritten archives.
+"""
+    readme_path.write_text(card, encoding="utf-8")
+    return readme_path
+
+
+def write_detector_model_card(
+    output_dir: Path,
+    *,
+    repo_id: str | None = None,
+    overwrite: bool = True,
+) -> Path:
+    """Write a Hub README for a RUKOPYS YOLO layout detector."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    readme_path = output_dir / "README.md"
+    if readme_path.exists() and not overwrite:
+        return readme_path
+
+    variant = _detect_yolo_variant(output_dir, repo_id)
+    variant_label = variant.upper().replace("YOLO", "YOLO ")
+    repo_heading = f"`{repo_id}`" if repo_id else "this detector"
+
+    card = f"""---
+base_model: {DEFAULT_YOLO_BASE_MODEL}
+library_name: ultralytics
+pipeline_tag: object-detection
+license: agpl-3.0
+datasets:
+- {DEFAULT_DATASET_ID}
+language:
+- uk
+tags:
+- ultralytics
+- yolo
+- yolo11
+- object-detection
+- document-layout-analysis
+- handwriting-recognition
+- htr
+- ukrainian
+---
+
+# RUKOPYS {variant_label} Handwriting Region Detector
+
+{repo_heading} contains an Ultralytics {variant_label} detector trained to localize handwritten
+regions in RUKOPYS manuscript page images. It is the layout-detection component of the RUKOPYS HTR
+pipeline and is intended to produce bounding boxes that can be passed to a recognizer or combined
+with page-level vision-language predictions.
+
+## What It Does
+
+- Detects handwritten text regions on scanned Ukrainian manuscript pages.
+- Outputs YOLO object-detection boxes for one class: `handwritten`.
+- Fits the RUKOPYS pipeline as the detector used before crop-level or page-level transcription.
+- Supports reproducible experiments with the curated RUKOPYS MVP YOLO dataset.
+
+## Training Data
+
+Trained on the curated RUKOPYS MVP dataset:
+[`{DEFAULT_DATASET_ID}`](https://huggingface.co/datasets/{DEFAULT_DATASET_ID}).
+
+The dataset is a cleaned derivative of `UkrainianCatholicUniversity/rukopys` prepared for layout
+detection, page-level HTR, and Kaggle-style evaluation.
+
+## Quick Use
+
+```python
+from huggingface_hub import hf_hub_download
+from ultralytics import YOLO
+
+model_path = hf_hub_download(
+    repo_id="{repo_id or '<your-detector-repo>'}",
+    filename="weights/best.pt",
+)
+model = YOLO(model_path)
+results = model.predict("page.jpg", imgsz=1536)
+```
+
+The project CLI can use the checkpoint directly:
+
+```bash
+rukopys infer \\
+  --mode detector-page-text \\
+  --test-dir data/raw/rukopys/test \\
+  --detector-model path/to/weights/best.pt \\
+  --vlm-model path/to/page-text-model \\
+  --output-jsonl outputs/predictions.jsonl
+```
+
+## Expected Output
+
+The detector returns bounding boxes for candidate handwritten regions. Downstream RUKOPYS inference
+converts those detections into the project page schema:
+
+```json
+[
+  {{
+    "bbox": [10, 20, 300, 80],
+    "type": "handwritten",
+    "language": "uk",
+    "text": "..."
+  }}
+]
+```
+
+## Limitations
+
+- This model detects regions only; it does not transcribe text.
+- It was trained for RUKOPYS-style Ukrainian manuscript pages and may need validation or fine-tuning
+  for other archives, scan qualities, or page layouts.
+- Detection quality should be evaluated together with the downstream recognizer because missed or
+  fragmented boxes affect final HTR output.
+- The detector is based on Ultralytics YOLO11, whose public models are distributed under AGPL-3.0.
+- The training dataset inherits non-commercial CC BY-NC-SA 4.0 terms from the source data; review
+  the dataset license before reuse.
+
+## Project Context
+
+This model is one component of a practical Ukrainian handwriting-recognition workflow: RUKOPYS data
+curation, YOLO layout training, recognizer fine-tuning, inference, evaluation, and submission export.
 """
     readme_path.write_text(card, encoding="utf-8")
     return readme_path

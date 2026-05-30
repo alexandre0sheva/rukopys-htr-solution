@@ -103,6 +103,32 @@ def test_upload_dataset_uses_large_folder_uploader(tmp_path: Path) -> None:
     api.upload_folder.assert_not_called()
 
 
+def test_upload_dataset_pack_uses_staging_copy(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "curated"
+    image_dir = dataset_dir / "yolo" / "images" / "train"
+    image_dir.mkdir(parents=True)
+    (dataset_dir / "metadata.jsonl").write_text("{}\n", encoding="utf-8")
+    (image_dir / "page-1.jpg").write_bytes(b"fake")
+
+    api = MagicMock()
+    api.list_repo_files.return_value = []
+
+    with _mock_hf_api(api):
+        upload_folder_to_hub(
+            dataset_dir,
+            repo_id="example-org/dataset",
+            repo_type="dataset",
+            pack=True,
+            replace_existing=True,
+            max_files_per_shard=1,
+        )
+
+    assert (image_dir / "page-1.jpg").exists()
+    assert not list(image_dir.glob("shard-*.tar"))
+    uploaded_path = Path(api.upload_large_folder.call_args.kwargs["folder_path"])
+    assert uploaded_path != dataset_dir.resolve()
+
+
 def test_model_card_describes_a100_v2_adapter(tmp_path: Path) -> None:
     model_dir = tmp_path / "model"
     model_dir.mkdir()
@@ -120,3 +146,23 @@ def test_model_card_describes_a100_v2_adapter(tmp_path: Path) -> None:
     assert "RUKOPYS Qwen3-VL 8B Page LoRA (A100 v2)" in card
     assert "preferred release over the original page adapter" in card
     assert "page-level Ukrainian handwriting" in card
+
+
+def test_model_card_describes_yolo11m_detector(tmp_path: Path) -> None:
+    model_dir = tmp_path / "detector"
+    weights_dir = model_dir / "weights"
+    weights_dir.mkdir(parents=True)
+    (weights_dir / "best.pt").write_bytes(b"fake")
+    (model_dir / "args.yaml").write_text("model: yolo11m.pt\nimgsz: 1536\n", encoding="utf-8")
+
+    readme = write_model_card(
+        model_dir,
+        repo_id="example-org/rukopys-yolo11m-detector",
+    )
+
+    card = readme.read_text(encoding="utf-8")
+    assert "RUKOPYS YOLO 11M Handwriting Region Detector" in card
+    assert "pipeline_tag: object-detection" in card
+    assert "library_name: ultralytics" in card
+    assert "Qwen3-VL" not in card
+    assert "PEFT/LoRA adapter" not in card

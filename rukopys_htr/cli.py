@@ -11,6 +11,7 @@ from .constants import (
     DEFAULT_DETECTOR_CONFIDENCE,
     DEFAULT_DETECTOR_IOU,
     DEFAULT_DETECTOR_MODEL,
+    DEFAULT_DETECTOR_REPO,
     DEFAULT_HF_NAMESPACE,
     DEFAULT_INFERENCE_MAX_PIXELS,
     DEFAULT_PAGE_MAX_NEW_TOKENS,
@@ -19,7 +20,7 @@ from .constants import (
     SOURCE_DATASET,
 )
 from .curate import curate_dataset
-from .download import download_curated_dataset, download_dataset
+from .download import download_curated_dataset, download_dataset, download_detector_model
 from .evaluate import evaluate_curated_val, evaluate_predictions
 from .infer import (
     EmptyDetector,
@@ -107,6 +108,19 @@ def _default_hf_model_id() -> str | None:
     return None
 
 
+def _default_hf_detector_model_id(config: dict[str, Any]) -> str:
+    env_model = env_value("HF_DETECTOR_MODEL_ID") or env_value("RUKOPYS_HF_DETECTOR_MODEL_ID")
+    if env_model:
+        return env_model
+    namespace = _hf_namespace()
+    if namespace:
+        return f"{namespace}/rukopys-yolo11m-detector"
+    configured = config.get("detector_model") or config.get("detector_repo")
+    if configured:
+        return configured
+    return DEFAULT_DETECTOR_REPO
+
+
 def _env_private(default: bool = False) -> bool:
     value = env_value("HF_PRIVATE") or env_value("RUKOPYS_HF_PRIVATE")
     if value is None:
@@ -154,6 +168,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo-id")
     p.add_argument("--no-unpack", action="store_true")
     p.add_argument("--max-workers", type=int, default=16)
+    p.add_argument(
+        "--unpack-workers",
+        type=int,
+        help="Parallel tar-shard unpack workers. Defaults to --max-workers.",
+    )
+
+    p = sub.add_parser(
+        "download-detector",
+        help="Download trained YOLO detector model from Hugging Face",
+    )
+    p.add_argument("--output", type=_path, required=True)
+    p.add_argument("--repo-id")
+    p.add_argument("--max-workers", type=int, default=16)
 
     p = sub.add_parser("curate", help="Curate raw RUKOPYS data into training artifacts")
     p.add_argument("--raw-dir", type=_path, required=True)
@@ -177,6 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("unpack-curated", help="Restore loose files from tar shards")
     p.add_argument("--dataset-dir", type=_path, required=True)
     p.add_argument("--keep-shards", action="store_true")
+    p.add_argument("--num-workers", type=int, default=1)
 
     p = sub.add_parser("train-detector", help="Train YOLO layout detector")
     p.add_argument("--data-yaml", type=_path, required=True)
@@ -333,8 +361,24 @@ def main(argv: list[str] | None = None) -> int:
             repo_id=args.repo_id or _default_hf_dataset_id(config),
             unpack=not args.no_unpack,
             max_workers=args.max_workers,
+            unpack_workers=args.unpack_workers,
         )
         print(json.dumps({"path": str(path), **stats}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "download-detector":
+        path, checkpoint = download_detector_model(
+            output_dir=args.output,
+            repo_id=args.repo_id or _default_hf_detector_model_id(config),
+            max_workers=args.max_workers,
+        )
+        print(
+            json.dumps(
+                {"path": str(path), "checkpoint": str(checkpoint)},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     if args.command == "curate":
@@ -371,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
         stats = unpack_curated(
             dataset_dir=args.dataset_dir,
             keep_shards=args.keep_shards,
+            num_workers=args.num_workers,
         )
         print(json.dumps(stats, ensure_ascii=False, indent=2))
         return 0

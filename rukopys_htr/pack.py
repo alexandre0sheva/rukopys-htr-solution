@@ -4,6 +4,7 @@ import json
 import logging
 import tarfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -263,7 +264,24 @@ def _format_bytes(num_bytes: int) -> str:
     return f"{num_bytes / 1_000:.1f} KB"
 
 
-def unpack_curated(dataset_dir: Path, keep_shards: bool = False) -> dict[str, Any]:
+def _unpack_shard(task: tuple[str, str, Path, Path], keep_shards: bool) -> tuple[str, str]:
+    rel_dir, shard_name, shard_path, directory = task
+    with tarfile.open(shard_path, "r") as archive:
+        if hasattr(tarfile, "data_filter"):
+            archive.extractall(path=directory, filter="data")
+        else:
+            archive.extractall(path=directory)
+    if not keep_shards:
+        shard_path.unlink()
+    return rel_dir, shard_name
+
+
+def unpack_curated(
+    dataset_dir: Path,
+    keep_shards: bool = False,
+    *,
+    num_workers: int = 1,
+) -> dict[str, Any]:
     dataset_dir = dataset_dir.resolve()
     manifest_path = dataset_dir / PACK_MANIFEST
     if not manifest_path.is_file():
@@ -279,23 +297,38 @@ def unpack_curated(dataset_dir: Path, keep_shards: bool = False) -> dict[str, An
     summary = (
         f"Unpacking curated dataset at {dataset_dir}: "
         f"{len(packed_dirs)} dirs, {len(tasks)} shards, "
-        f"~{total_files} files, {_format_bytes(total_shard_bytes)} compressed"
+        f"~{total_files} files, {_format_bytes(total_shard_bytes)} compressed, "
+        f"{max(1, num_workers)} worker(s)"
     )
     logger.info(summary)
     print(summary, flush=True)
 
-    restored_files = 0
-    progress = tqdm(tasks, desc="Unpacking shards", unit="shard")
-    for rel_dir, shard_name, shard_path in progress:
-        progress.set_postfix_str(f"{rel_dir}/{shard_name}", refresh=False)
-        directory = dataset_dir / rel_dir
-        with tarfile.open(shard_path, "r") as archive:
-            if hasattr(tarfile, "data_filter"):
-                archive.extractall(path=directory, filter="data")
-            else:
-                archive.extractall(path=directory)
-        if not keep_shards:
-            shard_path.unlink()
+    unpack_tasks = [
+        (rel_dir, shard_name, shard_path, dataset_dir / rel_dir)
+        for rel_dir, shard_name, shard_path in tasks
+    ]
+
+    if num_workers <= 1 or len(unpack_tasks) <= 1:
+        progress = tqdm(unpack_tasks, desc="Unpacking shards", unit="shard")
+        for task in progress:
+            rel_dir, shard_name, _, _ = task
+            progress.set_postfix_str(f"{rel_dir}/{shard_name}", refresh=False)
+            _unpack_shard(task, keep_shards=keep_shards)
+    else:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [
+                executor.submit(_unpack_shard, task, keep_shards)
+                for task in unpack_tasks
+            ]
+            progress = tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc="Unpacking shards",
+                unit="shard",
+            )
+            for future in progress:
+                rel_dir, shard_name = future.result()
+                progress.set_postfix_str(f"{rel_dir}/{shard_name}", refresh=False)
 
     restored_files = total_files
 

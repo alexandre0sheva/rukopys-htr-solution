@@ -42,6 +42,7 @@ RAW_DIR = "/content/rukopys-htr/data/raw/rukopys"
 CURATED_DIR = f"{WORK_ROOT}/data/curated/rukopys_mvp"
 RUNS_DIR = f"{WORK_ROOT}/runs"
 OUTPUTS_DIR = f"{WORK_ROOT}/outputs"
+DETECTOR_DIR = f"{RUNS_DIR}/rukopys-yolo11m-detector"
 HF_NAMESPACE = "your-hf-username-or-org"
 HF_DATASET_ID = f"{HF_NAMESPACE}/rukopys-curated-mvp"
 HF_PAGE_TEXT_MODEL_ID = f"{HF_NAMESPACE}/rukopys-qwen3-vl-8b-page-text"
@@ -91,7 +92,9 @@ HF_DETECTOR_MODEL_ID = f"{HF_NAMESPACE}/rukopys-yolo11m-detector"
 # %%
 !rukopys download-curated \
   --output {CURATED_DIR} \
-  --repo-id {HF_DATASET_ID}
+  --repo-id {HF_DATASET_ID} \
+  --max-workers 32 \
+  --unpack-workers 16
 
 # %%
 # Still needed for sample_submission.csv and test inference.
@@ -118,22 +121,28 @@ HF_DETECTOR_MODEL_ID = f"{HF_NAMESPACE}/rukopys-yolo11m-detector"
   --batch-size 1
 
 # %% [markdown]
-# ## Train detector
+# ## Detector
 #
 # The detector predicts layout boxes and region types. The page-text VLM predicts text lines; the
-# inference pipeline assigns the generated text back to detector boxes in reading order.
+# inference pipeline assigns the generated text back to detector boxes in reading order. Download
+# the published detector for inference, or train and upload a replacement when you need one.
+
+# %%
+!rukopys download-detector \
+  --repo-id {HF_DETECTOR_MODEL_ID} \
+  --output {DETECTOR_DIR}
 
 # %%
 !rukopys train-detector \
   --data-yaml {CURATED_DIR}/yolo/data.yaml \
   --model yolo11m.pt \
-  --output-dir {RUNS_DIR}/detector_yolo11m \
+  --output-dir {DETECTOR_DIR} \
   --epochs 80 \
   --image-size 1536 \
   --batch 4
 
 !rukopys upload-model \
-  --model-dir {RUNS_DIR}/detector_yolo11m \
+  --model-dir {DETECTOR_DIR} \
   --repo-id {HF_DETECTOR_MODEL_ID}
 
 # %% [markdown]
@@ -191,7 +200,7 @@ HF_PAGE_TEXT_32B_MODEL_ID = f"{HF_NAMESPACE}/rukopys-qwen3-vl-32b-page-text"
 !rukopys infer \
   --mode detector-page-text \
   --test-dir {RAW_DIR}/test \
-  --detector-model {RUNS_DIR}/detector_yolo11m/weights/best.pt \
+  --detector-model {DETECTOR_DIR}/weights/best.pt \
   --vlm-model {RUNS_DIR}/qwen3_vl_8b_page_text \
   --max-pixels 1605632 \
   --page-max-new-tokens 1024 \

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TypeVar
 
@@ -166,59 +169,71 @@ def upload_folder_to_hub(
     if repo_type == "model":
         write_model_card(upload_dir, repo_id=repo_id)
 
+    staging_context = nullcontext(None)
     if pack:
+        staging_context = tempfile.TemporaryDirectory(prefix="rukopys_hub_upload_")
+
+    with staging_context as staging_root:
+        if pack:
+            assert staging_root is not None
+            staged_dir = Path(staging_root) / upload_dir.name
+            logger.info("Copying %s to temporary upload staging dir %s", upload_dir, staged_dir)
+            shutil.copytree(upload_dir, staged_dir)
+            upload_dir = staged_dir
+
         pack_kwargs = {}
-        if max_files_per_shard is not None:
-            pack_kwargs["max_files_per_shard"] = max_files_per_shard
-        pack_stats = ensure_packed_for_hub(upload_dir, **pack_kwargs)
-        logger.info("Packed curated dataset before upload: %s", pack_stats)
-        validate_hub_layout(upload_dir)
+        if pack:
+            if max_files_per_shard is not None:
+                pack_kwargs["max_files_per_shard"] = max_files_per_shard
+            pack_stats = ensure_packed_for_hub(upload_dir, **pack_kwargs)
+            logger.info("Packed staged curated dataset before upload: %s", pack_stats)
+            validate_hub_layout(upload_dir)
 
-    api = HfApi()
-    if replace_existing:
-        clear_hub_repo(
-            repo_id=repo_id,
-            repo_type=repo_type,
-            private=private,
-            recreate=recreate_repo,
-        )
-    else:
-        api.create_repo(repo_id=repo_id, repo_type=repo_type, private=private, exist_ok=True)
-
-    file_count, total_bytes = _folder_upload_stats(upload_dir)
-    use_large_uploader = (
-        repo_type == "dataset"
-        or file_count >= LARGE_FOLDER_FILE_THRESHOLD
-        or total_bytes >= LARGE_FOLDER_BYTES_THRESHOLD
-    )
-
-    if use_large_uploader:
-        logger.info(
-            "Uploading with upload_large_folder (%d files, %.2f GB)",
-            file_count,
-            total_bytes / (1024**3),
-        )
-
-        def _upload_large() -> None:
-            api.upload_large_folder(
+        api = HfApi()
+        if replace_existing:
+            clear_hub_repo(
                 repo_id=repo_id,
-                folder_path=str(upload_dir),
                 repo_type=repo_type,
                 private=private,
-                num_workers=num_workers,
+                recreate=recreate_repo,
+            )
+        else:
+            api.create_repo(repo_id=repo_id, repo_type=repo_type, private=private, exist_ok=True)
+
+        file_count, total_bytes = _folder_upload_stats(upload_dir)
+        use_large_uploader = (
+            repo_type == "dataset"
+            or file_count >= LARGE_FOLDER_FILE_THRESHOLD
+            or total_bytes >= LARGE_FOLDER_BYTES_THRESHOLD
+        )
+
+        if use_large_uploader:
+            logger.info(
+                "Uploading with upload_large_folder (%d files, %.2f GB)",
+                file_count,
+                total_bytes / (1024**3),
             )
 
-        _retry_on_rate_limit(_upload_large, action=f"uploading {repo_id}")
-    else:
+            def _upload_large() -> None:
+                api.upload_large_folder(
+                    repo_id=repo_id,
+                    folder_path=str(upload_dir),
+                    repo_type=repo_type,
+                    private=private,
+                    num_workers=num_workers,
+                )
 
-        def _upload() -> None:
-            api.upload_folder(
-                repo_id=repo_id,
-                repo_type=repo_type,
-                folder_path=str(upload_dir),
-                commit_message=commit_message or f"Upload {repo_type} artifacts",
-            )
+            _retry_on_rate_limit(_upload_large, action=f"uploading {repo_id}")
+        else:
 
-        _retry_on_rate_limit(_upload, action=f"uploading {repo_id}")
+            def _upload() -> None:
+                api.upload_folder(
+                    repo_id=repo_id,
+                    repo_type=repo_type,
+                    folder_path=str(upload_dir),
+                    commit_message=commit_message or f"Upload {repo_type} artifacts",
+                )
+
+            _retry_on_rate_limit(_upload, action=f"uploading {repo_id}")
 
     return f"https://huggingface.co/{'datasets/' if repo_type == 'dataset' else ''}{repo_id}"
