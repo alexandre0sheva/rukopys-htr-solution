@@ -93,6 +93,33 @@ def _processor_source(model_path_obj: Path, fallback_id: str) -> str:
     return fallback_id
 
 
+def _load_processor_with_chat_template(
+    auto_processor: Any,
+    model_path_obj: Path,
+    fallback_id: str,
+) -> tuple[Any, str]:
+    processor_source = _processor_source(model_path_obj, fallback_id)
+    processor = auto_processor.from_pretrained(processor_source)
+    if getattr(processor, "chat_template", None):
+        return processor, processor_source
+
+    if processor_source != fallback_id:
+        logger.warning(
+            "Processor at %s has no chat template; falling back to base processor %s",
+            processor_source,
+            fallback_id,
+        )
+        processor = auto_processor.from_pretrained(fallback_id)
+        if getattr(processor, "chat_template", None):
+            return processor, fallback_id
+
+    raise ValueError(
+        f"Processor {processor_source!r} does not provide a chat template. "
+        "For Qwen3-VL adapters, keep adapter_config.json with base_model_name_or_path "
+        "or add the base model chat template to the adapter repo."
+    )
+
+
 def load_vision_model_and_processor(
     model_path: str | Path,
     *,
@@ -100,6 +127,16 @@ def load_vision_model_and_processor(
     for_training: bool = False,
     max_pixels: int | None = None,
 ) -> tuple[Any, Any, Any]:
+    model_id = str(model_path)
+    model_path_obj = Path(model_path)
+    if model_path_obj.is_absolute() and not model_path_obj.exists():
+        raise FileNotFoundError(
+            f"VLM model path does not exist: {model_path_obj}. "
+            "Download the fine-tuned adapter first with `rukopys download-vlm --repo-id "
+            "<namespace/model> --output <local-dir>`, or pass the directory that contains "
+            "adapter_config.json."
+        )
+
     try:
         import torch
         from transformers import AutoProcessor, BitsAndBytesConfig
@@ -111,8 +148,6 @@ def load_vision_model_and_processor(
     except ImportError:
         from transformers import AutoModelForVision2Seq as AutoVisionModel
 
-    model_id = str(model_path)
-    model_path_obj = Path(model_path)
     processor_id = model_id
     cuda_available = torch.cuda.is_available()
     cuda_bf16 = cuda_available and torch.cuda.is_bf16_supported()
@@ -149,8 +184,11 @@ def load_vision_model_and_processor(
             device_map="auto" if cuda_available else None,
         )
 
-    processor_source = _processor_source(model_path_obj, processor_id)
-    processor = AutoProcessor.from_pretrained(processor_source)
+    processor, processor_source = _load_processor_with_chat_template(
+        AutoProcessor,
+        model_path_obj,
+        processor_id,
+    )
     effective_max, effective_min = resolve_pixel_budget(processor, max_pixels)
     if not for_training:
         logger.info(

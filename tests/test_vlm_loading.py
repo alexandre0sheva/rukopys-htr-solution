@@ -7,6 +7,8 @@ from PIL import Image
 
 from rukopys_htr.vlm_loading import (
     configure_processor_pixels,
+    load_vision_model_and_processor,
+    _load_processor_with_chat_template,
     prepare_vlm_image,
     resolve_pixel_budget,
 )
@@ -59,6 +61,38 @@ def test_resolve_pixel_budget_applies_override() -> None:
 
     assert max_pixels == 131_072
     assert min_pixels == 32_768
+
+
+def test_load_vision_model_explains_missing_absolute_path(tmp_path) -> None:
+    missing = tmp_path / "missing_adapter"
+
+    with pytest.raises(FileNotFoundError, match="rukopys download-vlm"):
+        load_vision_model_and_processor(missing.resolve())
+
+
+def test_load_processor_falls_back_when_local_processor_has_no_chat_template(tmp_path) -> None:
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "processor_config.json").write_text("{}", encoding="utf-8")
+    calls = []
+
+    class FakeAutoProcessor:
+        @staticmethod
+        def from_pretrained(source):
+            calls.append(str(source))
+            if str(source) == str(adapter_dir):
+                return SimpleNamespace(chat_template=None)
+            return SimpleNamespace(chat_template="{% for message in messages %}{{ message.content }}{% endfor %}")
+
+    processor, source = _load_processor_with_chat_template(
+        FakeAutoProcessor,
+        adapter_dir,
+        "Qwen/Qwen3-VL-8B-Instruct",
+    )
+
+    assert processor.chat_template
+    assert source == "Qwen/Qwen3-VL-8B-Instruct"
+    assert calls == [str(adapter_dir), "Qwen/Qwen3-VL-8B-Instruct"]
 
 
 @pytest.mark.parametrize(
