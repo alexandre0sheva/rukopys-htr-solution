@@ -100,6 +100,37 @@ def download_detector_model(
     return path, find_detector_checkpoint(path)
 
 
+def download_vlm_model(
+    output_dir: Path,
+    repo_id: str,
+    *,
+    max_workers: int = 16,
+) -> Path:
+    return download_model(
+        output_dir=output_dir,
+        repo_id=repo_id,
+        max_workers=max_workers,
+        allow_patterns=[
+            "README.md",
+            "adapter_config.json",
+            "adapter_model.safetensors",
+            "adapter_model.bin",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "tokenizer.json",
+            "tokenizer.model",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "chat_template.json",
+            "generation_config.json",
+            "config.json",
+            "merges.txt",
+            "vocab.json",
+            "vocab.txt",
+        ],
+    )
+
+
 def download_curated_dataset(
     output_dir: Path,
     repo_id: str = DEFAULT_CURATED_DATASET,

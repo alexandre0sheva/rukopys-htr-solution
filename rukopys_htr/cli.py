@@ -20,7 +20,12 @@ from .constants import (
     SOURCE_DATASET,
 )
 from .curate import curate_dataset
-from .download import download_curated_dataset, download_dataset, download_detector_model
+from .download import (
+    download_curated_dataset,
+    download_dataset,
+    download_detector_model,
+    download_vlm_model,
+)
 from .evaluate import evaluate_curated_val, evaluate_predictions
 from .infer import (
     EmptyDetector,
@@ -177,6 +182,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "download-detector",
         help="Download trained YOLO detector model from Hugging Face",
+    )
+    p.add_argument("--output", type=_path, required=True)
+    p.add_argument("--repo-id")
+    p.add_argument("--max-workers", type=int, default=16)
+
+    p = sub.add_parser(
+        "download-vlm",
+        help="Download fine-tuned VLM adapter/model from Hugging Face",
     )
     p.add_argument("--output", type=_path, required=True)
     p.add_argument("--repo-id")
@@ -379,6 +392,18 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "download-vlm":
+        repo_id = args.repo_id or _default_hf_model_id()
+        if not repo_id:
+            raise ValueError("Set HF_MODEL_ID in .env or pass --repo-id.")
+        path = download_vlm_model(
+            output_dir=args.output,
+            repo_id=repo_id,
+            max_workers=args.max_workers,
+        )
+        print(path)
         return 0
 
     if args.command == "curate":
