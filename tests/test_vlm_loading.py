@@ -6,9 +6,9 @@ import pytest
 from PIL import Image
 
 from rukopys_htr.vlm_loading import (
+    _load_processor_with_chat_template,
     configure_processor_pixels,
     load_vision_model_and_processor,
-    _load_processor_with_chat_template,
     prepare_vlm_image,
     resolve_pixel_budget,
 )
@@ -82,7 +82,11 @@ def test_load_processor_falls_back_when_local_processor_has_no_chat_template(tmp
             calls.append(str(source))
             if str(source) == str(adapter_dir):
                 return SimpleNamespace(chat_template=None)
-            return SimpleNamespace(chat_template="{% for message in messages %}{{ message.content }}{% endfor %}")
+            return SimpleNamespace(
+                chat_template=(
+                    "{% for message in messages %}{{ message.content }}{% endfor %}"
+                ),
+            )
 
     processor, source = _load_processor_with_chat_template(
         FakeAutoProcessor,

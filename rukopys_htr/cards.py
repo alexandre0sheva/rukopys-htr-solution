@@ -53,7 +53,8 @@ def _looks_like_detector(output_dir: Path, repo_id: str | None) -> bool:
     repo_text = (repo_id or "").lower()
     if "yolo" in repo_text or "detector" in repo_text:
         return True
-    if (output_dir / "weights" / "best.pt").exists() or (output_dir / "weights" / "last.pt").exists():
+    weights = output_dir / "weights"
+    if (weights / "best.pt").exists() or (weights / "last.pt").exists():
         return True
     if any(output_dir.glob("*.pt")):
         return True
@@ -364,8 +365,9 @@ converts those detections into the project page schema:
 
 ## Project Context
 
-This model is one component of a practical Ukrainian handwriting-recognition workflow: RUKOPYS data
-curation, YOLO layout training, recognizer fine-tuning, inference, evaluation, and submission export.
+This model is one component of a practical Ukrainian handwriting-recognition workflow: RUKOPYS
+data curation, YOLO layout training, recognizer fine-tuning, inference, evaluation, and
+submission export.
 """
     readme_path.write_text(card, encoding="utf-8")
     return readme_path
